@@ -12,8 +12,10 @@ function cloneData(data) {
 
 // data.js の初期データをコピーして返します。
 function getInitialDataCopy() {
+  let initialData = null;
+
   if (typeof initialLifePlanData === "undefined") {
-    return {
+    initialData = {
       settings: {
         startYear: new Date().getFullYear(),
         endYear: new Date().getFullYear()
@@ -24,9 +26,11 @@ function getInitialDataCopy() {
       income: {},
       expenses: {}
     };
+  } else {
+    initialData = cloneData(initialLifePlanData);
   }
 
-  return cloneData(initialLifePlanData);
+  return ensureDataShape(initialData);
 }
 
 // localStorage の保存キーを取得します。
@@ -36,6 +40,60 @@ function getStorageKey() {
   }
 
   return LIFE_PLAN_STORAGE_KEY;
+}
+
+// 古い保存データに足りない項目を補完します。
+function ensureDataShape(data) {
+  const shapedData = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+
+  if (!shapedData.settings || typeof shapedData.settings !== "object") {
+    shapedData.settings = {
+      startYear: new Date().getFullYear(),
+      endYear: new Date().getFullYear()
+    };
+  }
+
+  if (!Array.isArray(shapedData.family)) {
+    shapedData.family = [];
+  }
+
+  if (!Array.isArray(shapedData.events)) {
+    shapedData.events = [];
+  }
+
+  if (!shapedData.assets || typeof shapedData.assets !== "object") {
+    shapedData.assets = {};
+  }
+
+  if (!shapedData.income || typeof shapedData.income !== "object") {
+    shapedData.income = {};
+  }
+
+  if (!shapedData.expenses || typeof shapedData.expenses !== "object") {
+    shapedData.expenses = {};
+  }
+
+  if (!shapedData.mortgage || typeof shapedData.mortgage !== "object") {
+    shapedData.mortgage = {};
+  }
+
+  if (!hasValue(shapedData.mortgage.currentBalance)) {
+    shapedData.mortgage.currentBalance = hasValue(shapedData.assets.liabilities)
+      ? toNumber(shapedData.assets.liabilities)
+      : 25000000;
+  }
+
+  if (!hasValue(shapedData.mortgage.annualInterestRate)) {
+    shapedData.mortgage.annualInterestRate = 0.97;
+  }
+
+  if (!hasValue(shapedData.mortgage.monthlyPayment)) {
+    shapedData.mortgage.monthlyPayment = hasValue(shapedData.expenses.mortgageMonthly)
+      ? toNumber(shapedData.expenses.mortgageMonthly)
+      : 80000;
+  }
+
+  return shapedData;
 }
 
 // id から DOM 要素を安全に取得します。
@@ -94,6 +152,43 @@ function setElementText(id, text, isNegative) {
   setNegativeClass(element, Boolean(isNegative));
 }
 
+// ダッシュボード内のカード配置先を取得します。
+function getDashboardGrid() {
+  const dashboardSection = getElement("dashboard-section");
+
+  if (!dashboardSection || typeof dashboardSection.querySelector !== "function") {
+    return null;
+  }
+
+  return dashboardSection.querySelector(".dashboard-grid");
+}
+
+// ダッシュボードに後から追加するカードを用意します。
+function ensureDashboardCard(valueId, label) {
+  if (getElement(valueId)) {
+    return;
+  }
+
+  const dashboardGrid = getDashboardGrid();
+
+  if (!dashboardGrid) {
+    return;
+  }
+
+  const card = document.createElement("article");
+  const title = document.createElement("h3");
+  const value = document.createElement("p");
+
+  card.className = "dashboard-card";
+  title.textContent = label;
+  value.id = valueId;
+  value.textContent = "-";
+
+  card.appendChild(title);
+  card.appendChild(value);
+  dashboardGrid.appendChild(card);
+}
+
 // localStorage から保存済みデータを読み込みます。
 function loadData() {
   try {
@@ -103,7 +198,7 @@ function loadData() {
       return getInitialDataCopy();
     }
 
-    return JSON.parse(savedData) || getInitialDataCopy();
+    return ensureDataShape(JSON.parse(savedData) || getInitialDataCopy());
   } catch (error) {
     console.warn("データの読み込みに失敗しました。初期データを使用します。", error);
     return getInitialDataCopy();
@@ -131,7 +226,7 @@ function resetData() {
     return;
   }
 
-  lifePlanData = getInitialDataCopy();
+  lifePlanData = ensureDataShape(getInitialDataCopy());
   editingEventId = null;
   editingFamilyId = null;
   lifePlanResults = calculateLifePlan(lifePlanData);
@@ -282,6 +377,58 @@ function calculateAnnualRegularExpenses(data) {
   return monthlyTotal * 12;
 }
 
+// 住宅ローン残高の年ごとの概算推移を計算します。
+function calculateMortgageSchedule(data) {
+  if (!data || !data.settings) {
+    return [];
+  }
+
+  const shapedData = ensureDataShape(data);
+  const startYear = Math.trunc(toNumber(shapedData.settings.startYear));
+  const endYear = Math.trunc(toNumber(shapedData.settings.endYear));
+
+  if (!startYear || !endYear || endYear < startYear) {
+    return [];
+  }
+
+  const mortgage = shapedData.mortgage || {};
+  const monthlyInterestRate = toNumber(mortgage.annualInterestRate) / 100 / 12;
+  const monthlyPayment = Math.max(toNumber(mortgage.monthlyPayment), 0);
+  const schedule = [];
+  let balance = Math.max(toNumber(mortgage.currentBalance), 0);
+
+  for (let year = startYear; year <= endYear; year += 1) {
+    const mortgageStartBalance = balance;
+    let mortgageAnnualPrincipal = 0;
+    let mortgageAnnualInterest = 0;
+
+    for (let month = 0; month < 12; month += 1) {
+      if (balance <= 0) {
+        balance = 0;
+        break;
+      }
+
+      const monthlyInterest = balance * monthlyInterestRate;
+      const principalPayment = Math.max(monthlyPayment - monthlyInterest, 0);
+      const actualPrincipalPayment = Math.min(principalPayment, balance);
+
+      mortgageAnnualInterest += monthlyInterest;
+      mortgageAnnualPrincipal += actualPrincipalPayment;
+      balance = Math.max(balance - actualPrincipalPayment, 0);
+    }
+
+    schedule.push({
+      year: year,
+      mortgageStartBalance: Math.round(mortgageStartBalance),
+      mortgageEndBalance: Math.round(balance),
+      mortgageAnnualPrincipal: Math.round(mortgageAnnualPrincipal),
+      mortgageAnnualInterest: Math.round(mortgageAnnualInterest)
+    });
+  }
+
+  return schedule;
+}
+
 // 年ごとのライフプラン結果を計算します。
 function calculateLifePlan(data) {
   if (!data || !data.settings) {
@@ -297,6 +444,7 @@ function calculateLifePlan(data) {
 
   const family = Array.isArray(data.family) ? data.family : [];
   const events = Array.isArray(data.events) ? data.events : [];
+  const mortgageSchedule = calculateMortgageSchedule(data);
   const results = [];
   let startAssets = calculateTotalAssets(data);
 
@@ -322,6 +470,15 @@ function calculateLifePlan(data) {
     const totalExpenses = regularExpenses + eventExpenseTotal;
     const annualBalance = annualIncome - totalExpenses;
     const endAssets = startAssets + annualBalance;
+    const mortgageInfo =
+      mortgageSchedule.find(function (schedule) {
+        return schedule.year === year;
+      }) || {
+        mortgageStartBalance: 0,
+        mortgageEndBalance: 0,
+        mortgageAnnualPrincipal: 0,
+        mortgageAnnualInterest: 0
+      };
 
     results.push({
       year: year,
@@ -335,7 +492,12 @@ function calculateLifePlan(data) {
       totalExpenses: totalExpenses,
       annualBalance: annualBalance,
       startAssets: startAssets,
-      endAssets: endAssets
+      endAssets: endAssets,
+      mortgageStartBalance: mortgageInfo.mortgageStartBalance,
+      mortgageEndBalance: mortgageInfo.mortgageEndBalance,
+      mortgageAnnualPrincipal: mortgageInfo.mortgageAnnualPrincipal,
+      mortgageAnnualInterest: mortgageInfo.mortgageAnnualInterest,
+      estimatedNetAssets: endAssets - mortgageInfo.mortgageEndBalance
     });
 
     startAssets = endAssets;
@@ -354,6 +516,12 @@ function renderDashboard() {
   const netAssets = calculateNetAssets(lifePlanData);
   const finalResult = lifePlanResults[lifePlanResults.length - 1];
   const finalAssets = finalResult ? finalResult.endAssets : 0;
+  const currentMortgageBalance = toNumber(lifePlanData.mortgage && lifePlanData.mortgage.currentBalance);
+  const finalMortgageBalance = finalResult ? finalResult.mortgageEndBalance : 0;
+  const finalEstimatedNetAssets = finalResult ? finalResult.estimatedNetAssets : 0;
+  const mortgagePayoffResult = lifePlanResults.find(function (result) {
+    return toNumber(result.mortgageEndBalance) <= 0 && toNumber(result.mortgageStartBalance) > 0;
+  });
   const firstNegativeResult = lifePlanResults.find(function (result) {
     return toNumber(result.endAssets) < 0;
   });
@@ -371,6 +539,15 @@ function renderDashboard() {
     Boolean(firstNegativeResult)
   );
   setElementText("dashboard-large-events", `${largeEventCount}件`, false);
+
+  ensureDashboardCard("dashboard-current-mortgage-balance", "現在住宅ローン残高");
+  ensureDashboardCard("dashboard-final-mortgage-balance", "最終年の住宅ローン残高");
+  ensureDashboardCard("dashboard-mortgage-payoff-year", "住宅ローン完済予定年");
+  ensureDashboardCard("dashboard-final-net-assets", "最終年の純資産見込み");
+  setElementText("dashboard-current-mortgage-balance", formatYen(currentMortgageBalance), false);
+  setElementText("dashboard-final-mortgage-balance", formatYen(finalMortgageBalance), false);
+  setElementText("dashboard-mortgage-payoff-year", mortgagePayoffResult ? `${mortgagePayoffResult.year}年` : "未完済", false);
+  setElementText("dashboard-final-net-assets", formatYen(finalEstimatedNetAssets), finalEstimatedNetAssets < 0);
 }
 
 // 家族一覧をカード形式で表示します。
@@ -706,7 +883,7 @@ function renderFinanceSummaries() {
 }
 
 // 数値入力欄を作ります。
-function createNumberField(id, label, value) {
+function createNumberField(id, label, value, step) {
   const field = document.createElement("div");
   const labelElement = document.createElement("label");
   const input = document.createElement("input");
@@ -717,7 +894,7 @@ function createNumberField(id, label, value) {
   input.type = "number";
   input.id = id;
   input.name = id;
-  input.step = "1";
+  input.step = step || "1";
   input.inputMode = "numeric";
   input.value = toNumber(value);
 
@@ -727,7 +904,7 @@ function createNumberField(id, label, value) {
 }
 
 // フォーム内の入力グループを作ります。
-function appendFinanceFormGroup(form, title, fields) {
+function appendFinanceFormGroup(form, title, fields, note) {
   const group = document.createElement("div");
   const grid = document.createElement("div");
 
@@ -736,10 +913,15 @@ function appendFinanceFormGroup(form, title, fields) {
   group.appendChild(createTextElement("h3", "list-title", title));
 
   fields.forEach(function (field) {
-    grid.appendChild(createNumberField(field.id, field.label, field.value));
+    grid.appendChild(createNumberField(field.id, field.label, field.value, field.step));
   });
 
   group.appendChild(grid);
+
+  if (note) {
+    group.appendChild(createTextElement("p", "list-memo", note));
+  }
+
   form.appendChild(group);
 }
 
@@ -1185,6 +1367,7 @@ function renderFinanceForm() {
   const assets = lifePlanData.assets || {};
   const income = lifePlanData.income || {};
   const expenses = lifePlanData.expenses || {};
+  const mortgage = lifePlanData.mortgage || {};
   const form = document.createElement("form");
   const buttonRow = document.createElement("div");
   const submitButton = document.createElement("button");
@@ -1216,6 +1399,17 @@ function renderFinanceForm() {
     { id: "finance-expenses-car-monthly", label: "車関連", value: expenses.carMonthly },
     { id: "finance-expenses-other-fixed-monthly", label: "その他固定費", value: expenses.otherFixedMonthly }
   ]);
+
+  appendFinanceFormGroup(
+    form,
+    "住宅ローン設定",
+    [
+      { id: "mortgage-current-balance", label: "住宅ローン現在残高", value: mortgage.currentBalance },
+      { id: "mortgage-annual-interest-rate", label: "住宅ローン金利", value: mortgage.annualInterestRate, step: "0.01" },
+      { id: "mortgage-monthly-payment", label: "毎月返済額", value: mortgage.monthlyPayment }
+    ],
+    "住宅ローン残高は金利・毎月返済額から概算計算しています。金融機関の返済予定表とは一致しない場合があります。"
+  );
 
   buttonRow.className = "button-row";
   submitButton.type = "submit";
@@ -1261,6 +1455,14 @@ function handleFinanceFormSubmit(event) {
     otherFixedMonthly: getInputNumber("finance-expenses-other-fixed-monthly")
   };
 
+  lifePlanData.mortgage = {
+    currentBalance: getInputNumber("mortgage-current-balance"),
+    annualInterestRate: getInputNumber("mortgage-annual-interest-rate"),
+    monthlyPayment: getInputNumber("mortgage-monthly-payment")
+  };
+  lifePlanData.assets.liabilities = lifePlanData.mortgage.currentBalance;
+  lifePlanData.expenses.mortgageMonthly = lifePlanData.mortgage.monthlyPayment;
+
   const saved = saveData();
   renderAll();
 
@@ -1302,7 +1504,19 @@ function renderLifePlanTableHeader(table, family) {
     family.map(function (member) {
       return member.name || "名前未設定";
     }),
-    ["イベント", "イベント支出", "年間収入", "通常支出", "年間収支", "年初資産", "年末資産"]
+    [
+      "イベント",
+      "イベント支出",
+      "年間収入",
+      "通常支出",
+      "年間収支",
+      "年初資産",
+      "年末資産",
+      "住宅ローン年初残高",
+      "住宅ローン年末残高",
+      "住宅ローン年間利息",
+      "純資産見込み"
+    ]
   );
 
   headers.forEach(function (header) {
@@ -1366,6 +1580,10 @@ function renderLifePlanTable() {
     appendTableCell(row, formatYen(result.annualBalance), "number-cell", result.annualBalance < 0);
     appendTableCell(row, formatYen(result.startAssets), "number-cell");
     appendTableCell(row, formatYen(result.endAssets), "number-cell", result.endAssets < 0);
+    appendTableCell(row, formatYen(result.mortgageStartBalance), "number-cell");
+    appendTableCell(row, formatYen(result.mortgageEndBalance), "number-cell");
+    appendTableCell(row, formatYen(result.mortgageAnnualInterest), "number-cell");
+    appendTableCell(row, formatYen(result.estimatedNetAssets), "number-cell", result.estimatedNetAssets < 0);
 
     tableBody.appendChild(row);
   });
@@ -1542,7 +1760,7 @@ function importJson(file) {
           return;
         }
 
-        lifePlanData = importedData;
+        lifePlanData = ensureDataShape(importedData);
         const saved = saveData();
         editingFamilyId = null;
         editingEventId = null;
