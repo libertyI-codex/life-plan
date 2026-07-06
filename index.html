@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>家計ライフプラン表</title>
+  <link rel="stylesheet" href="style.css?v=10rc">
+</head>
+<body>
+  <header class="app-header">
+    <h1>家計ライフプラン表</h1>
+    <p>家族の年齢・イベント・資産推移を年単位で確認</p>
+  </header>
+
+  <main>
+    <section id="dashboard-section" aria-labelledby="dashboard-heading">
+      <h2 id="dashboard-heading">ダッシュボード</h2>
+      <div class="dashboard-grid">
+        <article class="dashboard-card">
+          <h3>現在総資産</h3>
+          <p id="dashboard-total-assets">-</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>現在純資産</h3>
+          <p id="dashboard-net-assets">-</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>最終年の年末資産見込み</h3>
+          <p id="dashboard-final-assets">-</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>資産がマイナスになる年</h3>
+          <p id="dashboard-negative-year">-</p>
+        </article>
+        <article class="dashboard-card">
+          <h3>大きな支出イベント数</h3>
+          <p id="dashboard-large-events">-</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="family-section" aria-labelledby="family-heading">
+      <h2 id="family-heading">家族設定</h2>
+      <div id="family-list"></div>
+      <div id="family-form-area"></div>
+    </section>
+
+    <section id="event-section" aria-labelledby="event-heading">
+      <h2 id="event-heading">イベント設定</h2>
+      <div id="event-list"></div>
+      <div id="event-form-area"></div>
+    </section>
+
+    <section id="finance-section" aria-labelledby="finance-heading">
+      <h2 id="finance-heading">資産・収入・支出設定</h2>
+      <div id="asset-summary"></div>
+      <div id="income-summary"></div>
+      <div id="expense-summary"></div>
+      <div id="finance-form-area"></div>
+    </section>
+
+    <section id="asset-chart-section" aria-labelledby="asset-chart-heading">
+      <h2 id="asset-chart-heading">年末資産グラフ</h2>
+      <div id="asset-chart"></div>
+    </section>
+
+    <section id="life-plan-section" aria-labelledby="life-plan-heading">
+      <h2 id="life-plan-heading">ライフプラン表</h2>
+      <div class="table-scroll">
+        <table id="life-plan-table">
+          <thead>
+            <tr>
+              <th scope="col">年</th>
+              <th scope="col">家族年齢</th>
+              <th scope="col">イベント</th>
+              <th scope="col">イベント支出</th>
+              <th scope="col">年間収入</th>
+              <th scope="col">通常支出</th>
+              <th scope="col">年間収支</th>
+              <th scope="col">年初資産</th>
+              <th scope="col">年末資産</th>
+            </tr>
+          </thead>
+          <tbody id="life-plan-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="data-management-section" aria-labelledby="data-management-heading">
+      <h2 id="data-management-heading">データ管理</h2>
+      <button type="button" id="save-data-button">保存</button>
+      <button type="button" id="reset-data-button">初期データに戻す</button>
+    </section>
+  </main>
+
+  <div id="app-message" role="status" aria-live="polite"></div>
+
+  <script src="data.js?v=10rc"></script>
+  <script src="app.js?v=10rc"></script>
+</body>
+</html>
