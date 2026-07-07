@@ -728,7 +728,7 @@ function formatUsd(value) {
 // ライフプラン表用のUSD表示です。
 function formatUsdForTable(value) {
   return isCompactLifePlanTable()
-    ? `${Math.round(toNumber(value)).toLocaleString("ja-JP")} USD`
+    ? Math.round(toNumber(value)).toLocaleString("ja-JP")
     : formatUsd(value);
 }
 
@@ -1358,27 +1358,27 @@ function renderEventList() {
 
     buttonRow.className = "button-row event-action-row";
     moveUpButton.type = "button";
-    moveUpButton.className = "secondary-button small-button";
+    moveUpButton.className = "secondary-button small-button event-action-button";
     moveUpButton.textContent = "上へ";
     moveUpButton.disabled = index === 0;
     moveUpButton.addEventListener("click", function () {
       moveEvent(event.id, "up");
     });
     moveDownButton.type = "button";
-    moveDownButton.className = "secondary-button small-button";
+    moveDownButton.className = "secondary-button small-button event-action-button";
     moveDownButton.textContent = "下へ";
     moveDownButton.disabled = index === events.length - 1;
     moveDownButton.addEventListener("click", function () {
       moveEvent(event.id, "down");
     });
     editButton.type = "button";
-    editButton.className = "secondary-button";
+    editButton.className = "secondary-button small-button event-action-button";
     editButton.textContent = "編集";
     editButton.addEventListener("click", function () {
       startEditEvent(event.id);
     });
     deleteButton.type = "button";
-    deleteButton.className = "danger-button";
+    deleteButton.className = "danger-button small-button event-action-button";
     deleteButton.textContent = "削除";
     deleteButton.addEventListener("click", function () {
       handleDeleteEvent(event.id);
@@ -1543,11 +1543,8 @@ function ensureCalculationSettingsSection() {
   }
 
   const formArea = document.createElement("div");
-  const tableSettingsArea = document.createElement("div");
   formArea.id = "calculation-settings-form-area";
-  tableSettingsArea.id = "table-display-settings-area";
   section.appendChild(formArea);
-  section.appendChild(tableSettingsArea);
 
   const familySection = getElement("family-section");
   const dashboardSection = getElement("dashboard-section");
@@ -1562,6 +1559,34 @@ function ensureCalculationSettingsSection() {
   }
 
   return section;
+}
+
+// ライフプラン表の直前に、表示列設定を置く領域を用意します。
+function ensureLifePlanTableSettingsArea() {
+  const section = getElement("life-plan-section");
+
+  if (!section) {
+    return null;
+  }
+
+  let settingsArea = getElement("life-plan-table-settings-area");
+  const tableScroll = section.querySelector ? section.querySelector(".table-scroll") : null;
+  const content = getElement("life-plan-section-content");
+  const parent = tableScroll && tableScroll.parentNode ? tableScroll.parentNode : content || section;
+
+  if (!settingsArea) {
+    settingsArea = document.createElement("div");
+    settingsArea.id = "life-plan-table-settings-area";
+    settingsArea.className = "table-display-settings-area";
+  }
+
+  if (tableScroll && settingsArea.nextSibling !== tableScroll) {
+    parent.insertBefore(settingsArea, tableScroll);
+  } else if (!settingsArea.parentNode) {
+    parent.appendChild(settingsArea);
+  }
+
+  return settingsArea;
 }
 
 // 数値入力欄に最小・最大値を設定します。
@@ -1692,7 +1717,7 @@ function handleCalculationSettingsSubmit(event) {
 
 // ライフプラン表の表示列設定を表示します。
 function renderTableDisplaySettings() {
-  const settingsArea = getElement("table-display-settings-area");
+  const settingsArea = ensureLifePlanTableSettingsArea();
 
   if (!settingsArea) {
     return;
@@ -1740,7 +1765,6 @@ function renderTableDisplaySettings() {
 function renderCalculationSettingsSection() {
   ensureCalculationSettingsSection();
   renderCalculationSettingsForm();
-  renderTableDisplaySettings();
 }
 
 // 資産・収入・支出のサマリーを表示します。
@@ -2856,8 +2880,16 @@ function renderLifePlanTable() {
     }
 
     if (isTableColumnVisible("dollarInsurance")) {
-      appendTableCell(row, result.dollarInsuranceCashValueUsd > 0 ? formatUsdForTable(result.dollarInsuranceCashValueUsd) : "-", "number-cell");
-      appendTableCell(row, result.dollarInsuranceCashValueJpy > 0 ? formatYenForTable(result.dollarInsuranceCashValueJpy) : "-", "number-cell");
+      appendTableCell(
+        row,
+        result.dollarInsuranceCashValueUsd > 0 ? formatUsdForTable(result.dollarInsuranceCashValueUsd) : "-",
+        "number-cell dollar-insurance-table-cell dollar-insurance-usd-cell"
+      );
+      appendTableCell(
+        row,
+        result.dollarInsuranceCashValueJpy > 0 ? formatYenForTable(result.dollarInsuranceCashValueJpy) : "-",
+        "number-cell dollar-insurance-table-cell dollar-insurance-jpy-cell"
+      );
     }
 
     tableBody.appendChild(row);
@@ -3195,6 +3227,7 @@ function renderAll() {
   runRenderStep(renderFinanceSummaries, "資産・収入・支出サマリー");
   runRenderStep(renderFinanceForm, "資産・収入・支出編集フォーム");
   runRenderStep(renderDollarInsuranceSection, "ドル建生命保険");
+  runRenderStep(renderTableDisplaySettings, "ライフプラン表表示設定");
   runRenderStep(renderLifePlanTable, "ライフプラン表");
   runRenderStep(renderAssetChart, "年末資産グラフ");
   runRenderStep(renderDataManagement, "データ管理");
