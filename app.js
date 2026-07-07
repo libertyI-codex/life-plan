@@ -2734,9 +2734,12 @@ function appendTableCell(row, text, className, isNegative) {
 }
 
 // 表の見出しセルを追加します。
-function appendTableHeaderCell(row, text) {
+function appendTableHeaderCell(row, text, className) {
   const cell = document.createElement("th");
   cell.scope = "col";
+  if (className) {
+    cell.className = className;
+  }
   cell.textContent = text;
   row.appendChild(cell);
   return cell;
@@ -2789,8 +2792,16 @@ function renderLifePlanTableHeader(table, family) {
   }
 
   if (isTableColumnVisible("dollarInsurance")) {
-    appendTableHeaderCell(row, "ドル建保険 解約返戻金USD（参考）");
-    appendTableHeaderCell(row, "ドル建保険 円換算（総資産外）");
+    appendTableHeaderCell(
+      row,
+      isCompactLifePlanTable() ? "返戻USD" : "ドル建保険 解約返戻金USD（参考）",
+      "dollar-insurance-column dollar-insurance-usd-column"
+    );
+    appendTableHeaderCell(
+      row,
+      isCompactLifePlanTable() ? "返戻円" : "ドル建保険 円換算（総資産外）",
+      "dollar-insurance-column dollar-insurance-yen-column"
+    );
   }
 
   tableHead.appendChild(row);
@@ -2883,12 +2894,12 @@ function renderLifePlanTable() {
       appendTableCell(
         row,
         result.dollarInsuranceCashValueUsd > 0 ? formatUsdForTable(result.dollarInsuranceCashValueUsd) : "-",
-        "number-cell dollar-insurance-table-cell dollar-insurance-usd-cell"
+        "number-cell dollar-insurance-table-cell dollar-insurance-column dollar-insurance-usd-column compact-dollar-insurance-cell"
       );
       appendTableCell(
         row,
         result.dollarInsuranceCashValueJpy > 0 ? formatYenForTable(result.dollarInsuranceCashValueJpy) : "-",
-        "number-cell dollar-insurance-table-cell dollar-insurance-jpy-cell"
+        "number-cell dollar-insurance-table-cell dollar-insurance-column dollar-insurance-yen-column compact-dollar-insurance-cell"
       );
     }
 
