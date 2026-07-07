@@ -4,6 +4,7 @@ let lifePlanResults = [];
 let messageTimerId = null;
 let editingEventId = null;
 let editingFamilyId = null;
+let lifePlanUiState = null;
 
 // データを安全に複製します。
 function cloneData(data) {
@@ -42,15 +43,208 @@ function getStorageKey() {
   return LIFE_PLAN_STORAGE_KEY;
 }
 
+// 画面の開閉状態は家計データとは別キーに保存します。
+function getUiStateStorageKey() {
+  return "lifePlanLocal.uiState.v1";
+}
+
+// UI状態の初期値を作ります。
+function getDefaultUiState() {
+  return {
+    collapsedSections: {
+      dashboard: false,
+      calculationSettings: false,
+      family: false,
+      events: false,
+      finance: false,
+      dollarInsurance: false,
+      chart: false,
+      table: false,
+      dataManagement: false
+    },
+    collapsedForms: {
+      familyForm: false,
+      eventForm: false,
+      financeForm: false,
+      dollarInsuranceForm: false,
+      backupText: true
+    },
+    tableColumns: {
+      familyAges: true,
+      income: true,
+      regularExpenses: true,
+      eventExpenses: true,
+      annualBalance: true,
+      yearEndAssets: true,
+      mortgage: true,
+      netAssets: true,
+      dollarInsurance: true
+    },
+    compactLifePlanTable: false
+  };
+}
+
+// 古いUI状態に足りない項目があっても安全に補完します。
+function ensureUiStateShape(uiState) {
+  const defaultState = getDefaultUiState();
+  const shapedState = uiState && typeof uiState === "object" && !Array.isArray(uiState) ? uiState : {};
+
+  if (!shapedState.collapsedSections || typeof shapedState.collapsedSections !== "object") {
+    shapedState.collapsedSections = {};
+  }
+
+  if (!shapedState.collapsedForms || typeof shapedState.collapsedForms !== "object") {
+    shapedState.collapsedForms = {};
+  }
+
+  if (!shapedState.tableColumns || typeof shapedState.tableColumns !== "object") {
+    shapedState.tableColumns = {};
+  }
+
+  Object.keys(defaultState.collapsedSections).forEach(function (key) {
+    if (typeof shapedState.collapsedSections[key] !== "boolean") {
+      shapedState.collapsedSections[key] = defaultState.collapsedSections[key];
+    }
+  });
+
+  Object.keys(defaultState.collapsedForms).forEach(function (key) {
+    if (typeof shapedState.collapsedForms[key] !== "boolean") {
+      shapedState.collapsedForms[key] = defaultState.collapsedForms[key];
+    }
+  });
+
+  Object.keys(defaultState.tableColumns).forEach(function (key) {
+    if (typeof shapedState.tableColumns[key] !== "boolean") {
+      shapedState.tableColumns[key] = defaultState.tableColumns[key];
+    }
+  });
+
+  if (typeof shapedState.compactLifePlanTable !== "boolean") {
+    shapedState.compactLifePlanTable = defaultState.compactLifePlanTable;
+  }
+
+  return shapedState;
+}
+
+// localStorage からUI状態を読み込みます。
+function loadUiState() {
+  try {
+    const savedUiState = localStorage.getItem(getUiStateStorageKey());
+
+    if (!savedUiState) {
+      return getDefaultUiState();
+    }
+
+    return ensureUiStateShape(JSON.parse(savedUiState));
+  } catch (error) {
+    console.warn("UI状態の読み込みに失敗しました。", error);
+    return getDefaultUiState();
+  }
+}
+
+// UI状態を保存します。失敗しても家計データ本体には影響させません。
+function saveUiState() {
+  try {
+    localStorage.setItem(getUiStateStorageKey(), JSON.stringify(getUiState()));
+  } catch (error) {
+    console.warn("UI状態の保存に失敗しました。", error);
+  }
+}
+
+// 現在のUI状態を取得します。
+function getUiState() {
+  if (!lifePlanUiState) {
+    lifePlanUiState = loadUiState();
+  }
+
+  return ensureUiStateShape(lifePlanUiState);
+}
+
+// セクションの折りたたみ状態を取得します。
+function isSectionCollapsed(sectionKey) {
+  return Boolean(getUiState().collapsedSections[sectionKey]);
+}
+
+// フォームの折りたたみ状態を取得します。
+function isFormCollapsed(formKey) {
+  return Boolean(getUiState().collapsedForms[formKey]);
+}
+
+// セクションの折りたたみ状態を変更します。
+function setSectionCollapsed(sectionKey, isCollapsed) {
+  getUiState().collapsedSections[sectionKey] = Boolean(isCollapsed);
+  saveUiState();
+}
+
+// フォームの折りたたみ状態を変更します。
+function setFormCollapsed(formKey, isCollapsed) {
+  getUiState().collapsedForms[formKey] = Boolean(isCollapsed);
+  saveUiState();
+}
+
+// ライフプラン表の列表示設定を取得します。
+function getTableColumnSettings() {
+  return getUiState().tableColumns;
+}
+
+// 指定した列グループを表示するかどうかを返します。
+function isTableColumnVisible(columnKey) {
+  return getTableColumnSettings()[columnKey] !== false;
+}
+
+// ライフプラン表の列表示を切り替えます。
+function setTableColumnVisibility(columnKey, isVisible) {
+  getTableColumnSettings()[columnKey] = Boolean(isVisible);
+  saveUiState();
+}
+
+// ライフプラン表のコンパクト表示状態を取得します。
+function isCompactLifePlanTable() {
+  return Boolean(getUiState().compactLifePlanTable);
+}
+
+// ライフプラン表のコンパクト表示状態を保存します。
+function setCompactLifePlanTable(isCompact) {
+  getUiState().compactLifePlanTable = Boolean(isCompact);
+  saveUiState();
+}
+
 // 古い保存データに足りない項目を補完します。
 function ensureDataShape(data) {
   const shapedData = data && typeof data === "object" && !Array.isArray(data) ? data : {};
 
   if (!shapedData.settings || typeof shapedData.settings !== "object") {
     shapedData.settings = {
-      startYear: new Date().getFullYear(),
-      endYear: new Date().getFullYear()
+      startYear: 2026,
+      endYear: 2056
     };
+  }
+
+  shapedData.settings.startYear = hasValue(shapedData.settings.startYear)
+    ? Math.trunc(toNumber(shapedData.settings.startYear))
+    : 2026;
+  shapedData.settings.endYear = hasValue(shapedData.settings.endYear)
+    ? Math.trunc(toNumber(shapedData.settings.endYear))
+    : 2056;
+
+  if (!shapedData.settings.startYear) {
+    shapedData.settings.startYear = 2026;
+  }
+
+  if (!shapedData.settings.endYear || shapedData.settings.endYear < shapedData.settings.startYear) {
+    shapedData.settings.endYear = shapedData.settings.startYear;
+  }
+
+  shapedData.settings.baseYear = hasValue(shapedData.settings.baseYear)
+    ? Math.trunc(toNumber(shapedData.settings.baseYear))
+    : shapedData.settings.startYear;
+
+  if (!shapedData.settings.baseYear) {
+    shapedData.settings.baseYear = shapedData.settings.startYear;
+  }
+
+  if (!hasValue(shapedData.settings.memo)) {
+    shapedData.settings.memo = "";
   }
 
   if (!Array.isArray(shapedData.family)) {
@@ -93,6 +287,46 @@ function ensureDataShape(data) {
       : 80000;
   }
 
+  if (!shapedData.dollarInsurance || typeof shapedData.dollarInsurance !== "object") {
+    shapedData.dollarInsurance = {};
+  }
+
+  if (typeof shapedData.dollarInsurance.enabled !== "boolean") {
+    shapedData.dollarInsurance.enabled = true;
+  }
+
+  if (!hasValue(shapedData.dollarInsurance.policyName)) {
+    shapedData.dollarInsurance.policyName = "米国ドル建終身保険";
+  }
+
+  if (!hasValue(shapedData.dollarInsurance.targetFamilyMemberId)) {
+    shapedData.dollarInsurance.targetFamilyMemberId = "";
+  }
+
+  if (!hasValue(shapedData.dollarInsurance.exchangeRate)) {
+    shapedData.dollarInsurance.exchangeRate = 150;
+  } else {
+    shapedData.dollarInsurance.exchangeRate = toNumber(shapedData.dollarInsurance.exchangeRate);
+  }
+
+  if (!hasValue(shapedData.dollarInsurance.memo)) {
+    shapedData.dollarInsurance.memo = "";
+  }
+
+  if (!hasValue(shapedData.dollarInsurance.scheduleText)) {
+    shapedData.dollarInsurance.scheduleText = "";
+  }
+
+  if (Array.isArray(shapedData.dollarInsurance.schedule)) {
+    shapedData.dollarInsurance.schedule = normalizeDollarInsuranceSchedule(shapedData.dollarInsurance.schedule);
+  } else {
+    shapedData.dollarInsurance.schedule = [];
+  }
+
+  if (shapedData.dollarInsurance.schedule.length === 0 && shapedData.dollarInsurance.scheduleText) {
+    shapedData.dollarInsurance.schedule = parseDollarInsuranceScheduleText(shapedData.dollarInsurance.scheduleText);
+  }
+
   return shapedData;
 }
 
@@ -125,6 +359,186 @@ function createTextElement(tagName, className, text) {
 
   element.textContent = text;
   return element;
+}
+
+// 折りたたみ対象の主要セクション定義です。
+function getCollapsibleSectionConfigs() {
+  return [
+    { key: "dashboard", sectionId: "dashboard-section", headingId: "dashboard-heading" },
+    { key: "calculationSettings", sectionId: "calculation-settings-section", headingId: "calculation-settings-heading" },
+    { key: "family", sectionId: "family-section", headingId: "family-heading" },
+    { key: "events", sectionId: "event-section", headingId: "event-heading" },
+    { key: "finance", sectionId: "finance-section", headingId: "finance-heading" },
+    { key: "dollarInsurance", sectionId: "dollar-insurance-section", headingId: "dollar-insurance-heading" },
+    { key: "chart", sectionId: "asset-chart-section", headingId: "asset-chart-heading" },
+    { key: "table", sectionId: "life-plan-section", headingId: "life-plan-heading" },
+    { key: "dataManagement", sectionId: "data-management-section", headingId: "data-management-heading" }
+  ];
+}
+
+// フォーム折りたたみボタンの表示設定です。
+function getFormPanelConfig(formKey) {
+  const configs = {
+    familyForm: {
+      buttonId: "family-form-toggle-button",
+      panelId: "family-form-panel",
+      openLabel: "入力欄を開く",
+      closeLabel: "入力欄を閉じる"
+    },
+    eventForm: {
+      buttonId: "event-form-toggle-button",
+      panelId: "event-form-panel",
+      openLabel: "入力欄を開く",
+      closeLabel: "入力欄を閉じる"
+    },
+    financeForm: {
+      buttonId: "finance-form-toggle-button",
+      panelId: "finance-form-panel",
+      openLabel: "入力欄を開く",
+      closeLabel: "入力欄を閉じる"
+    },
+    dollarInsuranceForm: {
+      buttonId: "dollar-insurance-form-toggle-button",
+      panelId: "dollar-insurance-form-panel",
+      openLabel: "保険入力欄を開く",
+      closeLabel: "保険入力欄を閉じる"
+    },
+    backupText: {
+      buttonId: "backup-text-toggle-button",
+      panelId: "backup-text-panel",
+      openLabel: "バックアップ文字列欄を開く",
+      closeLabel: "バックアップ文字列欄を閉じる"
+    }
+  };
+
+  return configs[formKey] || null;
+}
+
+// セクションの開閉状態を反映します。
+function applySectionState(config) {
+  const section = getElement(config.sectionId);
+  const content = getElement(`${config.sectionId}-content`);
+  const toggleButton = getElement(`${config.sectionId}-toggle-button`);
+  const isCollapsed = isSectionCollapsed(config.key);
+
+  if (!section || !content || !toggleButton) {
+    return;
+  }
+
+  section.classList.toggle("is-collapsed", isCollapsed);
+  content.hidden = isCollapsed;
+  toggleButton.textContent = isCollapsed ? "開く" : "閉じる";
+  toggleButton.setAttribute("aria-expanded", String(!isCollapsed));
+  toggleButton.setAttribute("aria-controls", content.id);
+}
+
+// セクションの開閉ボタンと中身ラッパーを用意します。
+function setupCollapsibleSections() {
+  getCollapsibleSectionConfigs().forEach(function (config) {
+    const section = getElement(config.sectionId);
+    const heading = getElement(config.headingId);
+
+    if (!section || !heading) {
+      return;
+    }
+
+    let header = getElement(`${config.sectionId}-collapsible-header`);
+    let content = getElement(`${config.sectionId}-content`);
+    let toggleButton = getElement(`${config.sectionId}-toggle-button`);
+
+    if (!header) {
+      header = document.createElement("div");
+      header.id = `${config.sectionId}-collapsible-header`;
+      header.className = "collapsible-header";
+      section.insertBefore(header, heading);
+      header.appendChild(heading);
+    }
+
+    if (!toggleButton) {
+      toggleButton = document.createElement("button");
+      toggleButton.type = "button";
+      toggleButton.id = `${config.sectionId}-toggle-button`;
+      toggleButton.className = "section-toggle-button";
+      header.appendChild(toggleButton);
+    }
+
+    toggleButton.onclick = function () {
+      setSectionCollapsed(config.key, !isSectionCollapsed(config.key));
+      applySectionState(config);
+    };
+
+    if (!content) {
+      content = document.createElement("div");
+      content.id = `${config.sectionId}-content`;
+      content.className = "collapsible-content";
+      section.appendChild(content);
+
+      Array.prototype.slice.call(section.childNodes).forEach(function (node) {
+        if (node !== header && node !== content) {
+          content.appendChild(node);
+        }
+      });
+    }
+
+    applySectionState(config);
+  });
+}
+
+// フォームパネルの開閉状態を画面に反映します。
+function applyFormPanelState(formKey) {
+  const config = getFormPanelConfig(formKey);
+
+  if (!config) {
+    return;
+  }
+
+  const panel = getElement(config.panelId);
+  const toggleButton = getElement(config.buttonId);
+  const isCollapsed = isFormCollapsed(formKey);
+
+  if (!panel || !toggleButton) {
+    return;
+  }
+
+  panel.hidden = isCollapsed;
+  panel.classList.toggle("is-collapsed", isCollapsed);
+  toggleButton.textContent = isCollapsed ? config.openLabel : config.closeLabel;
+  toggleButton.setAttribute("aria-expanded", String(!isCollapsed));
+  toggleButton.setAttribute("aria-controls", config.panelId);
+}
+
+// フォームパネルの開閉を切り替えます。
+function toggleFormPanel(formKey) {
+  setFormCollapsed(formKey, !isFormCollapsed(formKey));
+  applyFormPanelState(formKey);
+}
+
+// フォームパネルを開きます。
+function openFormPanel(formKey) {
+  setFormCollapsed(formKey, false);
+  applyFormPanelState(formKey);
+}
+
+// フォームの前に開閉ボタンを置き、入力欄本体をパネル化します。
+function createFormPanel(container, formKey) {
+  const config = getFormPanelConfig(formKey);
+  const toggleButton = document.createElement("button");
+  const panel = document.createElement("div");
+
+  toggleButton.type = "button";
+  toggleButton.id = config.buttonId;
+  toggleButton.className = "form-toggle-button secondary-button";
+  toggleButton.addEventListener("click", function () {
+    toggleFormPanel(formKey);
+  });
+
+  panel.id = config.panelId;
+  panel.className = "form-panel";
+
+  container.appendChild(toggleButton);
+  container.appendChild(panel);
+  applyFormPanelState(formKey);
+  return panel;
 }
 
 // negative クラスの付け外しをまとめます。
@@ -282,6 +696,49 @@ function formatYen(value) {
   return `${toNumber(value).toLocaleString("ja-JP")}円`;
 }
 
+// コンパクト表示用に円を万円単位へ短縮します。
+function formatCompactYen(value) {
+  const numberValue = toNumber(value);
+  const absoluteValue = Math.abs(numberValue);
+
+  if (numberValue === 0) {
+    return "0";
+  }
+
+  if (absoluteValue >= 10000) {
+    const compactValue = Math.round(numberValue / 10000);
+    return `${compactValue.toLocaleString("ja-JP")}万円`;
+  }
+
+  return `${numberValue.toLocaleString("ja-JP")}円`;
+}
+
+// ライフプラン表用に通常表示とコンパクト表示を切り替えます。
+function formatYenForTable(value) {
+  return isCompactLifePlanTable() ? formatCompactYen(value) : formatYen(value);
+}
+
+// 米ドル金額を読みやすく表示します。
+function formatUsd(value) {
+  return `${toNumber(value).toLocaleString("ja-JP", {
+    maximumFractionDigits: 2
+  })} USD`;
+}
+
+// ライフプラン表用のUSD表示です。
+function formatUsdForTable(value) {
+  return isCompactLifePlanTable()
+    ? `${Math.round(toNumber(value)).toLocaleString("ja-JP")} USD`
+    : formatUsd(value);
+}
+
+// パーセント値を読みやすく表示します。
+function formatPercent(value) {
+  return `${toNumber(value).toLocaleString("ja-JP", {
+    maximumFractionDigits: 2
+  })}%`;
+}
+
 // 生年月日文字列の先頭4桁から生年を取得します。
 function getBirthYear(birthDate) {
   const birthYear = Number(String(birthDate || "").slice(0, 4));
@@ -302,6 +759,163 @@ function calculateAgeInYear(birthDate, year) {
 // null、undefined、空文字以外を入力ありとして扱います。
 function hasValue(value) {
   return value !== null && value !== undefined && value !== "";
+}
+
+// USD、%、円、空白などを取り除き、数値だけを取り出します。
+function parseFlexibleNumber(value) {
+  const cleanedText = String(value || "")
+    .replace(/USD/gi, "")
+    .replace(/米ドル/g, "")
+    .replace(/USドル/g, "")
+    .replace(/[,$￥円%]/g, "")
+    .replace(/\s/g, "")
+    .replace(/[^\d.-]/g, "");
+
+  if (!/\d/.test(cleanedText)) {
+    return Number.NaN;
+  }
+
+  return Number(cleanedText);
+}
+
+// 変換できない場合は0として扱います。
+function parseFlexibleNumberOrZero(value) {
+  const parsedValue = parseFlexibleNumber(value);
+  return Number.isNaN(parsedValue) ? 0 : parsedValue;
+}
+
+// カンマ区切りで数値の桁区切りが混ざった行を、8列に近づけて分割します。
+function splitDollarInsuranceCsvLine(line) {
+  if (line.includes("\t")) {
+    return line.split("\t");
+  }
+
+  const tokens = line.split(",");
+
+  if (tokens.length <= 8) {
+    return tokens;
+  }
+
+  const fields = [tokens[0] || "", tokens[1] || ""];
+  let index = 2;
+
+  while (fields.length < 7 && index < tokens.length) {
+    let fieldText = tokens[index] || "";
+    index += 1;
+
+    while (
+      index < tokens.length &&
+      !fieldText.includes(".") &&
+      /^\s*\d{3}(?:\.\d+)?(?:\s*(?:USD|米ドル|USドル|円|%)?)?\s*$/i.test(tokens[index] || "")
+    ) {
+      fieldText = `${fieldText},${tokens[index]}`;
+      index += 1;
+    }
+
+    fields.push(fieldText);
+  }
+
+  fields.push(tokens.slice(index).join(","));
+  return fields;
+}
+
+// CSV風テキストの1行をドル建生命保険の行データへ変換します。
+function parseDollarInsuranceScheduleLine(line) {
+  const columns = splitDollarInsuranceCsvLine(line).map(function (column) {
+    return String(column || "").trim();
+  });
+  const policyYear = parseFlexibleNumber(columns[0]);
+  const age = parseFlexibleNumber(columns[1]);
+
+  if (Number.isNaN(policyYear) || Number.isNaN(age)) {
+    return null;
+  }
+
+  return {
+    policyYear: Math.trunc(policyYear),
+    age: Math.trunc(age),
+    cumulativePremiumUsd: parseFlexibleNumberOrZero(columns[2]),
+    deathBenefitUsd: parseFlexibleNumberOrZero(columns[3]),
+    cashValueUsd: parseFlexibleNumberOrZero(columns[4]),
+    returnRate: parseFlexibleNumberOrZero(columns[5]),
+    reducedPaidUpInsuranceUsd: parseFlexibleNumberOrZero(columns[6]),
+    elapsedPeriod: columns[7] || ""
+  };
+}
+
+// CSV風テキスト全体を解約返戻金推移データへ変換します。
+function parseDollarInsuranceScheduleText(scheduleText) {
+  return String(scheduleText || "")
+    .split(/\r?\n/)
+    .map(function (line) {
+      return line.trim();
+    })
+    .filter(Boolean)
+    .map(parseDollarInsuranceScheduleLine)
+    .filter(Boolean);
+}
+
+// JSONから読み込んだ解約返戻金配列を安全な形に整えます。
+function normalizeDollarInsuranceSchedule(schedule) {
+  return (Array.isArray(schedule) ? schedule : [])
+    .map(function (row) {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      return {
+        policyYear: Math.trunc(toNumber(row.policyYear)),
+        age: Math.trunc(toNumber(row.age)),
+        cumulativePremiumUsd: toNumber(row.cumulativePremiumUsd),
+        deathBenefitUsd: toNumber(row.deathBenefitUsd),
+        cashValueUsd: toNumber(row.cashValueUsd),
+        returnRate: toNumber(row.returnRate),
+        reducedPaidUpInsuranceUsd: toNumber(row.reducedPaidUpInsuranceUsd),
+        elapsedPeriod: String(row.elapsedPeriod || "")
+      };
+    })
+    .filter(function (row) {
+      return row && row.policyYear > 0 && row.age > 0;
+    });
+}
+
+// 対象者の年齢に一致するドル建生命保険の行を探します。
+function findDollarInsuranceRowByAge(data, age) {
+  const insurance = data && data.dollarInsurance ? data.dollarInsurance : {};
+  const schedule = Array.isArray(insurance.schedule) ? insurance.schedule : [];
+  const targetAge = Math.trunc(toNumber(age));
+
+  return schedule.find(function (row) {
+    return Math.trunc(toNumber(row.age)) === targetAge;
+  }) || null;
+}
+
+// 指定年のライフプラン表用に、ドル建生命保険の参考額を取得します。
+function getDollarInsuranceReferenceForYear(data, year) {
+  const insurance = data && data.dollarInsurance ? data.dollarInsurance : {};
+  const family = Array.isArray(data && data.family) ? data.family : [];
+  const targetFamily = family.find(function (member) {
+    return member.id === insurance.targetFamilyMemberId;
+  });
+
+  if (!insurance.enabled || !targetFamily) {
+    return {
+      dollarInsuranceCashValueUsd: 0,
+      dollarInsuranceCashValueJpy: 0,
+      dollarInsuranceReturnRate: 0
+    };
+  }
+
+  const targetAge = calculateAgeInYear(targetFamily.birthDate, year);
+  const matchedRow = targetAge === null ? null : findDollarInsuranceRowByAge(data, targetAge);
+  const cashValueUsd = matchedRow ? toNumber(matchedRow.cashValueUsd) : 0;
+  const exchangeRate = toNumber(insurance.exchangeRate);
+
+  return {
+    dollarInsuranceCashValueUsd: cashValueUsd,
+    dollarInsuranceCashValueJpy: cashValueUsd * exchangeRate,
+    dollarInsuranceReturnRate: matchedRow ? toNumber(matchedRow.returnRate) : 0
+  };
 }
 
 // イベントが発生する年を計算します。
@@ -386,6 +1000,8 @@ function calculateMortgageSchedule(data) {
   const shapedData = ensureDataShape(data);
   const startYear = Math.trunc(toNumber(shapedData.settings.startYear));
   const endYear = Math.trunc(toNumber(shapedData.settings.endYear));
+  const baseYear = Math.trunc(toNumber(shapedData.settings.baseYear)) || startYear;
+  const projectionStartYear = Math.min(baseYear, startYear);
 
   if (!startYear || !endYear || endYear < startYear) {
     return [];
@@ -397,7 +1013,7 @@ function calculateMortgageSchedule(data) {
   const schedule = [];
   let balance = Math.max(toNumber(mortgage.currentBalance), 0);
 
-  for (let year = startYear; year <= endYear; year += 1) {
+  for (let year = projectionStartYear; year <= endYear; year += 1) {
     const mortgageStartBalance = balance;
     let mortgageAnnualPrincipal = 0;
     let mortgageAnnualInterest = 0;
@@ -437,6 +1053,8 @@ function calculateLifePlan(data) {
 
   const startYear = Math.trunc(toNumber(data.settings.startYear));
   const endYear = Math.trunc(toNumber(data.settings.endYear));
+  const baseYear = Math.trunc(toNumber(data.settings.baseYear)) || startYear;
+  const projectionStartYear = Math.min(baseYear, startYear);
 
   if (!startYear || !endYear || endYear < startYear) {
     return [];
@@ -448,7 +1066,7 @@ function calculateLifePlan(data) {
   const results = [];
   let startAssets = calculateTotalAssets(data);
 
-  for (let year = startYear; year <= endYear; year += 1) {
+  for (let year = projectionStartYear; year <= endYear; year += 1) {
     const familyAges = family.map(function (member) {
       return {
         id: member.id,
@@ -470,6 +1088,7 @@ function calculateLifePlan(data) {
     const totalExpenses = regularExpenses + eventExpenseTotal;
     const annualBalance = annualIncome - totalExpenses;
     const endAssets = startAssets + annualBalance;
+    const dollarInsuranceReference = getDollarInsuranceReferenceForYear(data, year);
     const mortgageInfo =
       mortgageSchedule.find(function (schedule) {
         return schedule.year === year;
@@ -480,25 +1099,30 @@ function calculateLifePlan(data) {
         mortgageAnnualInterest: 0
       };
 
-    results.push({
-      year: year,
-      familyAges: familyAges,
-      events: yearEvents.map(function (event) {
-        return cloneData(event);
-      }),
-      eventExpenseTotal: eventExpenseTotal,
-      annualIncome: annualIncome,
-      regularExpenses: regularExpenses,
-      totalExpenses: totalExpenses,
-      annualBalance: annualBalance,
-      startAssets: startAssets,
-      endAssets: endAssets,
-      mortgageStartBalance: mortgageInfo.mortgageStartBalance,
-      mortgageEndBalance: mortgageInfo.mortgageEndBalance,
-      mortgageAnnualPrincipal: mortgageInfo.mortgageAnnualPrincipal,
-      mortgageAnnualInterest: mortgageInfo.mortgageAnnualInterest,
-      estimatedNetAssets: endAssets - mortgageInfo.mortgageEndBalance
-    });
+    if (year >= startYear) {
+      results.push({
+        year: year,
+        familyAges: familyAges,
+        events: yearEvents.map(function (event) {
+          return cloneData(event);
+        }),
+        eventExpenseTotal: eventExpenseTotal,
+        annualIncome: annualIncome,
+        regularExpenses: regularExpenses,
+        totalExpenses: totalExpenses,
+        annualBalance: annualBalance,
+        startAssets: startAssets,
+        endAssets: endAssets,
+        mortgageStartBalance: mortgageInfo.mortgageStartBalance,
+        mortgageEndBalance: mortgageInfo.mortgageEndBalance,
+        mortgageAnnualPrincipal: mortgageInfo.mortgageAnnualPrincipal,
+        mortgageAnnualInterest: mortgageInfo.mortgageAnnualInterest,
+        estimatedNetAssets: endAssets - mortgageInfo.mortgageEndBalance,
+        dollarInsuranceCashValueUsd: dollarInsuranceReference.dollarInsuranceCashValueUsd,
+        dollarInsuranceCashValueJpy: dollarInsuranceReference.dollarInsuranceCashValueJpy,
+        dollarInsuranceReturnRate: dollarInsuranceReference.dollarInsuranceReturnRate
+      });
+    }
 
     startAssets = endAssets;
   }
@@ -622,6 +1246,7 @@ function startEditFamily(familyId) {
   }
 
   editingFamilyId = familyId;
+  openFormPanel("familyForm");
   renderFamilyForm();
 
   const formArea = getElement("family-form-area");
@@ -705,9 +1330,11 @@ function renderEventList() {
     return;
   }
 
-  events.forEach(function (event) {
+  events.forEach(function (event, index) {
     const card = document.createElement("article");
     const buttonRow = document.createElement("div");
+    const moveUpButton = document.createElement("button");
+    const moveDownButton = document.createElement("button");
     const editButton = document.createElement("button");
     const deleteButton = document.createElement("button");
     const eventYear = getEventYear(event, lifePlanData);
@@ -729,7 +1356,21 @@ function renderEventList() {
     );
     card.appendChild(createTextElement("p", "list-memo", `メモ: ${event.memo || "-"}`));
 
-    buttonRow.className = "button-row";
+    buttonRow.className = "button-row event-action-row";
+    moveUpButton.type = "button";
+    moveUpButton.className = "secondary-button small-button";
+    moveUpButton.textContent = "上へ";
+    moveUpButton.disabled = index === 0;
+    moveUpButton.addEventListener("click", function () {
+      moveEvent(event.id, "up");
+    });
+    moveDownButton.type = "button";
+    moveDownButton.className = "secondary-button small-button";
+    moveDownButton.textContent = "下へ";
+    moveDownButton.disabled = index === events.length - 1;
+    moveDownButton.addEventListener("click", function () {
+      moveEvent(event.id, "down");
+    });
     editButton.type = "button";
     editButton.className = "secondary-button";
     editButton.textContent = "編集";
@@ -742,6 +1383,8 @@ function renderEventList() {
     deleteButton.addEventListener("click", function () {
       handleDeleteEvent(event.id);
     });
+    buttonRow.appendChild(moveUpButton);
+    buttonRow.appendChild(moveDownButton);
     buttonRow.appendChild(editButton);
     buttonRow.appendChild(deleteButton);
     card.appendChild(buttonRow);
@@ -785,6 +1428,31 @@ function handleDeleteEvent(eventId) {
   }
 }
 
+// イベント一覧の表示順を上下に入れ替えます。
+function moveEvent(eventId, direction) {
+  const events = Array.isArray(lifePlanData && lifePlanData.events) ? lifePlanData.events : [];
+  const currentIndex = events.findIndex(function (event) {
+    return event.id === eventId;
+  });
+  const moveOffset = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  const nextIndex = currentIndex + moveOffset;
+
+  if (currentIndex < 0 || moveOffset === 0 || nextIndex < 0 || nextIndex >= events.length) {
+    return;
+  }
+
+  const currentEvent = events[currentIndex];
+  events[currentIndex] = events[nextIndex];
+  events[nextIndex] = currentEvent;
+
+  const saved = saveData();
+  renderAll();
+
+  if (saved) {
+    showMessage("イベントの順番を変更しました", "success");
+  }
+}
+
 // イベントの編集モードを開始します。
 function startEditEvent(eventId) {
   const events = Array.isArray(lifePlanData && lifePlanData.events) ? lifePlanData.events : [];
@@ -798,6 +1466,7 @@ function startEditEvent(eventId) {
   }
 
   editingEventId = eventId;
+  openFormPanel("eventForm");
   renderEventForm();
 
   const formArea = getElement("event-form-area");
@@ -838,6 +1507,240 @@ function renderSummaryCard(containerId, title, items) {
   });
 
   container.appendChild(card);
+}
+
+// ライフプラン表の列グループ設定です。
+function getTableColumnConfig() {
+  return [
+    { key: "familyAges", label: "家族年齢" },
+    { key: "income", label: "収入" },
+    { key: "regularExpenses", label: "通常支出" },
+    { key: "eventExpenses", label: "イベント支出" },
+    { key: "annualBalance", label: "年間収支" },
+    { key: "yearEndAssets", label: "年末資産" },
+    { key: "mortgage", label: "住宅ローン" },
+    { key: "netAssets", label: "純資産" },
+    { key: "dollarInsurance", label: "ドル建生命保険" }
+  ];
+}
+
+// 計算設定セクションを画面に用意します。
+function ensureCalculationSettingsSection() {
+  let section = getElement("calculation-settings-section");
+
+  if (section) {
+    return section;
+  }
+
+  section = document.createElement("section");
+  section.id = "calculation-settings-section";
+  section.setAttribute("aria-labelledby", "calculation-settings-heading");
+  section.appendChild(createTextElement("h2", "", "計算設定"));
+
+  const heading = section.querySelector ? section.querySelector("h2") : null;
+  if (heading) {
+    heading.id = "calculation-settings-heading";
+  }
+
+  const formArea = document.createElement("div");
+  const tableSettingsArea = document.createElement("div");
+  formArea.id = "calculation-settings-form-area";
+  tableSettingsArea.id = "table-display-settings-area";
+  section.appendChild(formArea);
+  section.appendChild(tableSettingsArea);
+
+  const familySection = getElement("family-section");
+  const dashboardSection = getElement("dashboard-section");
+  const main = document.querySelector ? document.querySelector("main") : document.body;
+
+  if (familySection && familySection.parentNode) {
+    familySection.parentNode.insertBefore(section, familySection);
+  } else if (dashboardSection && dashboardSection.parentNode) {
+    dashboardSection.parentNode.insertBefore(section, dashboardSection.nextSibling);
+  } else if (main) {
+    main.appendChild(section);
+  }
+
+  return section;
+}
+
+// 数値入力欄に最小・最大値を設定します。
+function setNumberFieldLimits(field, min, max) {
+  const input = field && field.querySelector ? field.querySelector("input") : null;
+
+  if (!input) {
+    return;
+  }
+
+  if (hasValue(min)) {
+    input.min = String(min);
+  }
+
+  if (hasValue(max)) {
+    input.max = String(max);
+  }
+}
+
+// 現在資産などの基準年に関する説明文を作ります。
+function getBaseYearDescription(settings) {
+  const baseYear = toNumber(settings && settings.baseYear);
+  return `現在資産・収入・支出は ${baseYear}年時点の入力値として計算しています。2027年以降に使う場合は、計算開始年と現在資産の基準年をその年に変更し、その時点の資産・収入・支出に更新してください。`;
+}
+
+// 計算設定フォームを表示します。
+function renderCalculationSettingsForm() {
+  const formArea = getElement("calculation-settings-form-area");
+
+  if (!formArea || !lifePlanData) {
+    return;
+  }
+
+  clearElement(formArea);
+
+  const settings = lifePlanData.settings || {};
+  const form = document.createElement("form");
+  const grid = document.createElement("div");
+  const buttonRow = document.createElement("div");
+  const submitButton = document.createElement("button");
+  const startYearField = createNumberField("settings-start-year", "計算開始年", settings.startYear);
+  const endYearField = createNumberField("settings-end-year", "計算終了年", settings.endYear);
+  const baseYearField = createNumberField("settings-base-year", "現在資産の基準年", settings.baseYear);
+
+  setNumberFieldLimits(startYearField, 1900, 2200);
+  setNumberFieldLimits(endYearField, 1900, 2200);
+  setNumberFieldLimits(baseYearField, 1900, 2200);
+
+  form.id = "calculation-settings-form";
+  form.addEventListener("submit", handleCalculationSettingsSubmit);
+  grid.className = "form-grid";
+  grid.appendChild(startYearField);
+  grid.appendChild(endYearField);
+  grid.appendChild(baseYearField);
+  grid.appendChild(createTextareaField("settings-memo", "メモ", settings.memo || ""));
+
+  buttonRow.className = "button-row";
+  submitButton.type = "submit";
+  submitButton.className = "primary-button";
+  submitButton.textContent = "計算設定を保存";
+  buttonRow.appendChild(submitButton);
+
+  form.appendChild(createTextElement("h3", "list-title", "計算期間と基準年"));
+  form.appendChild(createTextElement("p", "list-memo", getBaseYearDescription(settings)));
+  form.appendChild(grid);
+  form.appendChild(buttonRow);
+  formArea.appendChild(form);
+}
+
+// 計算設定の入力値をチェックします。
+function validateCalculationSettings(startYear, endYear, baseYear) {
+  if (startYear < 1900 || startYear > 2200) {
+    return "計算開始年は1900年以上、2200以下で入力してください";
+  }
+
+  if (endYear < startYear) {
+    return "計算終了年は計算開始年以上で入力してください";
+  }
+
+  if (endYear - startYear + 1 > 80) {
+    return "計算期間は最大80年程度までにしてください";
+  }
+
+  if (baseYear < 1900 || baseYear > 2200) {
+    return "現在資産の基準年は1900年以上、2200以下で入力してください";
+  }
+
+  if (baseYear > startYear) {
+    return "現在資産の基準年は計算開始年と同じ、または計算開始年以前にしてください";
+  }
+
+  return "";
+}
+
+// 計算設定フォームの内容を保存します。
+function handleCalculationSettingsSubmit(event) {
+  event.preventDefault();
+
+  if (!lifePlanData) {
+    lifePlanData = getInitialDataCopy();
+  }
+
+  const startYear = Math.trunc(getInputNumber("settings-start-year"));
+  const endYear = Math.trunc(getInputNumber("settings-end-year"));
+  const baseYear = Math.trunc(getInputNumber("settings-base-year"));
+  const memo = getInputValue("settings-memo");
+  const validationMessage = validateCalculationSettings(startYear, endYear, baseYear);
+
+  if (validationMessage) {
+    showMessage(validationMessage, "error");
+    return;
+  }
+
+  lifePlanData.settings = Object.assign({}, lifePlanData.settings || {}, {
+    startYear: startYear,
+    endYear: endYear,
+    baseYear: baseYear,
+    memo: memo
+  });
+
+  const saved = saveData();
+  renderAll();
+
+  if (saved) {
+    showMessage("計算設定を保存しました", "success");
+  }
+}
+
+// ライフプラン表の表示列設定を表示します。
+function renderTableDisplaySettings() {
+  const settingsArea = getElement("table-display-settings-area");
+
+  if (!settingsArea) {
+    return;
+  }
+
+  clearElement(settingsArea);
+
+  const card = document.createElement("article");
+  const checkboxGrid = document.createElement("div");
+  const compactField = createCheckboxField("compact-life-plan-table", "コンパクト表示", isCompactLifePlanTable());
+  const compactInput = compactField.querySelector ? compactField.querySelector("input") : null;
+
+  card.className = "list-card";
+  checkboxGrid.className = "checkbox-grid";
+  card.appendChild(createTextElement("h3", "list-title", "ライフプラン表の表示列設定"));
+
+  getTableColumnConfig().forEach(function (config) {
+    const field = createCheckboxField(`table-column-${config.key}`, config.label, isTableColumnVisible(config.key));
+    const input = field.querySelector ? field.querySelector("input") : null;
+
+    if (input) {
+      input.addEventListener("change", function () {
+        setTableColumnVisibility(config.key, input.checked);
+        renderAll();
+      });
+    }
+
+    checkboxGrid.appendChild(field);
+  });
+
+  if (compactInput) {
+    compactInput.addEventListener("change", function () {
+      setCompactLifePlanTable(compactInput.checked);
+      renderAll();
+    });
+  }
+
+  card.appendChild(checkboxGrid);
+  card.appendChild(compactField);
+  card.appendChild(createTextElement("p", "list-memo", "列表示設定とコンパクト表示はUI状態として保存します。家計データ本体には影響しません。"));
+  settingsArea.appendChild(card);
+}
+
+// 計算設定セクション全体を描画します。
+function renderCalculationSettingsSection() {
+  ensureCalculationSettingsSection();
+  renderCalculationSettingsForm();
+  renderTableDisplaySettings();
 }
 
 // 資産・収入・支出のサマリーを表示します。
@@ -883,10 +1786,11 @@ function renderFinanceSummaries() {
 }
 
 // 数値入力欄を作ります。
-function createNumberField(id, label, value, step) {
+function createNumberField(id, label, value, step, min, inputMode) {
   const field = document.createElement("div");
   const labelElement = document.createElement("label");
   const input = document.createElement("input");
+  const stepValue = step || "1";
 
   field.className = "form-field";
   labelElement.htmlFor = id;
@@ -894,8 +1798,11 @@ function createNumberField(id, label, value, step) {
   input.type = "number";
   input.id = id;
   input.name = id;
-  input.step = step || "1";
-  input.inputMode = "numeric";
+  input.step = stepValue;
+  input.inputMode = inputMode || (String(stepValue).includes(".") ? "decimal" : "numeric");
+  if (hasValue(min)) {
+    input.min = String(min);
+  }
   input.value = toNumber(value);
 
   field.appendChild(labelElement);
@@ -913,7 +1820,7 @@ function appendFinanceFormGroup(form, title, fields, note) {
   group.appendChild(createTextElement("h3", "list-title", title));
 
   fields.forEach(function (field) {
-    grid.appendChild(createNumberField(field.id, field.label, field.value, field.step));
+    grid.appendChild(createNumberField(field.id, field.label, field.value, field.step, field.min, field.inputMode));
   });
 
   group.appendChild(grid);
@@ -1053,6 +1960,23 @@ function createTextareaField(id, label, value) {
   return field;
 }
 
+// チェックボックス入力欄を作ります。
+function createCheckboxField(id, label, checked) {
+  const field = document.createElement("label");
+  const input = document.createElement("input");
+  const text = document.createElement("span");
+
+  field.className = "checkbox-field";
+  input.type = "checkbox";
+  input.id = id;
+  input.checked = Boolean(checked);
+  text.textContent = label;
+
+  field.appendChild(input);
+  field.appendChild(text);
+  return field;
+}
+
 // 家族追加・編集フォームを表示します。
 function renderFamilyForm() {
   const formArea = getElement("family-form-area");
@@ -1075,6 +1999,7 @@ function renderFamilyForm() {
   const buttonRow = document.createElement("div");
   const submitButton = document.createElement("button");
   const cancelButton = document.createElement("button");
+  const panel = createFormPanel(formArea, "familyForm");
 
   if (editingFamilyId && !editingFamily) {
     editingFamilyId = null;
@@ -1106,7 +2031,8 @@ function renderFamilyForm() {
 
   form.appendChild(grid);
   form.appendChild(buttonRow);
-  formArea.appendChild(form);
+  panel.appendChild(form);
+  applyFormPanelState("familyForm");
 }
 
 // 家族フォームの内容を追加または更新します。
@@ -1194,6 +2120,7 @@ function renderEventForm() {
   const buttonRow = document.createElement("div");
   const submitButton = document.createElement("button");
   const cancelButton = document.createElement("button");
+  const panel = createFormPanel(formArea, "eventForm");
   const categories = typeof EVENT_CATEGORIES === "undefined" ? ["その他"] : EVENT_CATEGORIES;
   const family = Array.isArray(lifePlanData.family) ? lifePlanData.family : [];
   const events = Array.isArray(lifePlanData.events) ? lifePlanData.events : [];
@@ -1263,7 +2190,8 @@ function renderEventForm() {
 
   form.appendChild(grid);
   form.appendChild(buttonRow);
-  formArea.appendChild(form);
+  panel.appendChild(form);
+  applyFormPanelState("eventForm");
 }
 
 // イベント追加フォームの送信内容をチェックして保存します。
@@ -1371,10 +2299,12 @@ function renderFinanceForm() {
   const form = document.createElement("form");
   const buttonRow = document.createElement("div");
   const submitButton = document.createElement("button");
+  const panel = createFormPanel(formArea, "financeForm");
 
   form.id = "finance-form";
   form.addEventListener("submit", handleFinanceFormSubmit);
   form.appendChild(createTextElement("h3", "list-title", "資産・収入・支出を編集"));
+  form.appendChild(createTextElement("p", "list-memo", getBaseYearDescription(lifePlanData.settings || {})));
 
   appendFinanceFormGroup(form, "現在資産", [
     { id: "finance-assets-cash", label: "現金・預金", value: assets.cash },
@@ -1405,7 +2335,14 @@ function renderFinanceForm() {
     "住宅ローン設定",
     [
       { id: "mortgage-current-balance", label: "住宅ローン現在残高", value: mortgage.currentBalance },
-      { id: "mortgage-annual-interest-rate", label: "住宅ローン金利", value: mortgage.annualInterestRate, step: "0.01" },
+      {
+        id: "mortgage-annual-interest-rate",
+        label: "住宅ローン金利",
+        value: mortgage.annualInterestRate,
+        step: "0.01",
+        min: "0",
+        inputMode: "decimal"
+      },
       { id: "mortgage-monthly-payment", label: "毎月返済額", value: mortgage.monthlyPayment }
     ],
     "住宅ローン残高は金利・毎月返済額から概算計算しています。金融機関の返済予定表とは一致しない場合があります。"
@@ -1417,7 +2354,8 @@ function renderFinanceForm() {
   submitButton.textContent = "資産・収入・支出を保存";
   buttonRow.appendChild(submitButton);
   form.appendChild(buttonRow);
-  formArea.appendChild(form);
+  panel.appendChild(form);
+  applyFormPanelState("financeForm");
 }
 
 // フォーム送信時に入力値をデータへ反映します。
@@ -1471,6 +2409,292 @@ function handleFinanceFormSubmit(event) {
   }
 }
 
+// ドル建生命保険セクションを画面に用意します。
+function ensureDollarInsuranceSection() {
+  let section = getElement("dollar-insurance-section");
+
+  if (section) {
+    return section;
+  }
+
+  section = document.createElement("section");
+  section.id = "dollar-insurance-section";
+  section.setAttribute("aria-labelledby", "dollar-insurance-heading");
+  section.appendChild(createTextElement("h2", "", "ドル建生命保険"));
+
+  const heading = section.querySelector ? section.querySelector("h2") : null;
+  if (heading) {
+    heading.id = "dollar-insurance-heading";
+  }
+
+  const summary = document.createElement("div");
+  const formArea = document.createElement("div");
+  const chart = document.createElement("div");
+
+  summary.id = "dollar-insurance-summary";
+  formArea.id = "dollar-insurance-form-area";
+  chart.id = "dollar-insurance-chart";
+
+  section.appendChild(summary);
+  section.appendChild(formArea);
+  section.appendChild(chart);
+
+  const chartSection = getElement("asset-chart-section");
+  const main = document.querySelector ? document.querySelector("main") : document.body;
+
+  if (chartSection && chartSection.parentNode) {
+    chartSection.parentNode.insertBefore(section, chartSection);
+  } else if (main) {
+    main.appendChild(section);
+  }
+
+  return section;
+}
+
+// ドル建生命保険の現在・最終サマリーを作ります。
+function getDollarInsuranceSummary(data) {
+  const insurance = data && data.dollarInsurance ? data.dollarInsurance : {};
+  const family = Array.isArray(data && data.family) ? data.family : [];
+  const schedule = Array.isArray(insurance.schedule) ? insurance.schedule : [];
+  const targetFamily = family.find(function (member) {
+    return member.id === insurance.targetFamilyMemberId;
+  });
+  const startYear = toNumber(data && data.settings && data.settings.startYear);
+  const currentAge = targetFamily ? calculateAgeInYear(targetFamily.birthDate, startYear) : null;
+  const currentRow = currentAge === null ? null : findDollarInsuranceRowByAge(data, currentAge);
+  const finalRow = schedule.length > 0 ? schedule[schedule.length - 1] : null;
+  const exchangeRate = toNumber(insurance.exchangeRate);
+
+  return {
+    exchangeRate: exchangeRate,
+    targetName: targetFamily ? targetFamily.name : "未選択",
+    currentAge: currentAge,
+    currentRow: currentRow,
+    currentCashValueUsd: currentRow ? toNumber(currentRow.cashValueUsd) : 0,
+    currentCashValueJpy: currentRow ? toNumber(currentRow.cashValueUsd) * exchangeRate : 0,
+    finalAge: finalRow ? toNumber(finalRow.age) : null,
+    finalCashValueUsd: finalRow ? toNumber(finalRow.cashValueUsd) : 0,
+    finalCashValueJpy: finalRow ? toNumber(finalRow.cashValueUsd) * exchangeRate : 0,
+    returnRate: currentRow ? toNumber(currentRow.returnRate) : finalRow ? toNumber(finalRow.returnRate) : 0
+  };
+}
+
+// ドル建生命保険のサマリーを表示します。
+function renderDollarInsuranceSummary() {
+  const summaryArea = getElement("dollar-insurance-summary");
+
+  if (!summaryArea || !lifePlanData) {
+    return;
+  }
+
+  clearElement(summaryArea);
+
+  const insurance = lifePlanData.dollarInsurance || {};
+  const summary = getDollarInsuranceSummary(lifePlanData);
+  const currentUsdText = summary.currentRow ? formatUsd(summary.currentCashValueUsd) : "該当なし";
+  const currentJpyText = summary.currentRow ? formatYen(summary.currentCashValueJpy) : "該当なし";
+  const finalUsdText = summary.finalAge === null ? "該当なし" : formatUsd(summary.finalCashValueUsd);
+  const finalJpyText = summary.finalAge === null ? "該当なし" : formatYen(summary.finalCashValueJpy);
+  const card = document.createElement("article");
+
+  card.className = "list-card";
+  card.appendChild(createTextElement("h3", "list-title", insurance.policyName || "米国ドル建終身保険"));
+  [
+    `対象者: ${summary.targetName}`,
+    `想定為替レート: 1 USD = ${summary.exchangeRate.toLocaleString("ja-JP", { maximumFractionDigits: 2 })}円`,
+    `現在年齢: ${summary.currentAge === null ? "未設定" : `${summary.currentAge}歳`}`,
+    `現在年齢に対応する解約返戻金USD（参考）: ${currentUsdText}`,
+    `現在年齢に対応する解約返戻金円換算（総資産外）: ${currentJpyText}`,
+    `最終年齢の解約返戻金USD（参考）: ${summary.finalAge === null ? "該当なし" : `${summary.finalAge}歳 / ${finalUsdText}`}`,
+    `最終年齢の解約返戻金円換算（総資産外）: ${finalJpyText}`,
+    `返戻率: ${formatPercent(summary.returnRate)}`
+  ].forEach(function (text) {
+    card.appendChild(createTextElement("p", "list-meta", text));
+  });
+  card.appendChild(
+    createTextElement(
+      "p",
+      "list-memo",
+      "この解約返戻金は総資産・純資産・年末資産見込みには含めていません。総資産外の参考資産として表示しています。"
+    )
+  );
+
+  if (insurance.memo) {
+    card.appendChild(createTextElement("p", "list-memo", `メモ: ${insurance.memo}`));
+  }
+
+  summaryArea.appendChild(card);
+}
+
+// ドル建生命保険フォームを表示します。
+function renderDollarInsuranceForm() {
+  const formArea = getElement("dollar-insurance-form-area");
+
+  if (!formArea || !lifePlanData) {
+    return;
+  }
+
+  clearElement(formArea);
+
+  const insurance = lifePlanData.dollarInsurance || {};
+  const family = Array.isArray(lifePlanData.family) ? lifePlanData.family : [];
+  const form = document.createElement("form");
+  const grid = document.createElement("div");
+  const buttonRow = document.createElement("div");
+  const submitButton = document.createElement("button");
+  const scheduleField = document.createElement("div");
+  const scheduleLabel = document.createElement("label");
+  const scheduleTextarea = document.createElement("textarea");
+  const panel = createFormPanel(formArea, "dollarInsuranceForm");
+  const familyOptions = [
+    {
+      value: "",
+      label: "対象者を選択"
+    }
+  ].concat(
+    family.map(function (member) {
+      return {
+        value: member.id,
+        label: member.name || "名前未設定"
+      };
+    })
+  );
+
+  form.id = "dollar-insurance-form";
+  form.addEventListener("submit", handleDollarInsuranceFormSubmit);
+  grid.className = "form-grid";
+
+  grid.appendChild(createTextField("dollar-insurance-policy-name", "保険名", true, insurance.policyName || ""));
+  grid.appendChild(createSelectField("dollar-insurance-target-family", "対象者", familyOptions, insurance.targetFamilyMemberId || ""));
+  grid.appendChild(
+    createNumberField("dollar-insurance-exchange-rate", "想定為替レート", insurance.exchangeRate, "0.01", "0", "decimal")
+  );
+  grid.appendChild(createTextareaField("dollar-insurance-memo", "メモ", insurance.memo || ""));
+
+  scheduleField.className = "form-field full-width-field";
+  scheduleLabel.htmlFor = "dollar-insurance-schedule-text";
+  scheduleLabel.textContent = "解約返戻金推移データ";
+  scheduleTextarea.id = "dollar-insurance-schedule-text";
+  scheduleTextarea.name = "dollar-insurance-schedule-text";
+  scheduleTextarea.rows = 12;
+  scheduleTextarea.placeholder =
+    "保険年度,年齢,払込保険料累計USD,死亡保険金USD,解約返戻金USD,返戻率%,払済保険金USD,経過保険期間\n1,27,2393.16,180000,0,0,0,\n2,28,4786.32,180000,0,0,0,";
+  scheduleTextarea.value = insurance.scheduleText || "";
+  scheduleField.appendChild(scheduleLabel);
+  scheduleField.appendChild(scheduleTextarea);
+
+  buttonRow.className = "button-row";
+  submitButton.type = "submit";
+  submitButton.className = "primary-button";
+  submitButton.textContent = "ドル建生命保険を保存";
+  buttonRow.appendChild(submitButton);
+
+  form.appendChild(createTextElement("h3", "list-title", "ドル建生命保険を編集"));
+  form.appendChild(grid);
+  form.appendChild(scheduleField);
+  form.appendChild(
+    createTextElement(
+      "p",
+      "list-memo",
+      "CSV風テキストはカンマ区切り・タブ区切りに対応します。この保険は総資産外の参考資産として扱い、総資産・純資産・年末資産見込みには自動反映しません。"
+    )
+  );
+  form.appendChild(buttonRow);
+  panel.appendChild(form);
+  applyFormPanelState("dollarInsuranceForm");
+}
+
+// ドル建生命保険フォームの内容を保存します。
+function handleDollarInsuranceFormSubmit(event) {
+  event.preventDefault();
+
+  if (!lifePlanData) {
+    lifePlanData = getInitialDataCopy();
+  }
+
+  const policyName = getInputValue("dollar-insurance-policy-name") || "米国ドル建終身保険";
+  const targetFamilyMemberId = getInputValue("dollar-insurance-target-family");
+  const exchangeRate = getInputNumber("dollar-insurance-exchange-rate");
+  const memo = getInputValue("dollar-insurance-memo");
+  const scheduleText = getInputValue("dollar-insurance-schedule-text");
+  const schedule = parseDollarInsuranceScheduleText(scheduleText);
+
+  lifePlanData.dollarInsurance = {
+    enabled: true,
+    policyName: policyName,
+    targetFamilyMemberId: targetFamilyMemberId,
+    exchangeRate: exchangeRate,
+    memo: memo,
+    scheduleText: scheduleText,
+    schedule: schedule
+  };
+
+  const saved = saveData();
+  renderAll();
+
+  if (saved) {
+    showMessage(`ドル建生命保険を保存しました（${schedule.length}行）`, "success");
+  }
+}
+
+// ドル建生命保険の簡易バーグラフを表示します。
+function renderDollarInsuranceChart() {
+  const chart = getElement("dollar-insurance-chart");
+
+  if (!chart || !lifePlanData) {
+    return;
+  }
+
+  clearElement(chart);
+
+  const insurance = lifePlanData.dollarInsurance || {};
+  const schedule = Array.isArray(insurance.schedule) ? insurance.schedule : [];
+  const exchangeRate = toNumber(insurance.exchangeRate);
+
+  if (schedule.length === 0) {
+    chart.appendChild(createTextElement("p", "list-meta", "解約返戻金推移データはまだありません。"));
+    return;
+  }
+
+  const chartList = document.createElement("div");
+  const maxCashValue = schedule.reduce(function (maxValue, row) {
+    return Math.max(maxValue, toNumber(row.cashValueUsd));
+  }, 0);
+  const chartMax = maxCashValue > 0 ? maxCashValue : 1;
+
+  chartList.className = "chart-list dollar-insurance-chart-list";
+  chart.appendChild(createTextElement("h3", "list-title", "解約返戻金推移"));
+
+  schedule.forEach(function (row) {
+    const chartRow = document.createElement("div");
+    const barWrap = document.createElement("div");
+    const bar = document.createElement("div");
+    const cashValueUsd = toNumber(row.cashValueUsd);
+    const widthPercent = Math.max(0, Math.min(100, (cashValueUsd / chartMax) * 100));
+
+    chartRow.className = "chart-row";
+    barWrap.className = "chart-bar-wrap";
+    bar.className = "chart-bar";
+    bar.style.width = `${widthPercent}%`;
+
+    chartRow.appendChild(createTextElement("div", "chart-year", `${toNumber(row.age)}歳`));
+    barWrap.appendChild(bar);
+    chartRow.appendChild(barWrap);
+    chartRow.appendChild(createTextElement("div", "chart-value", `${formatUsd(cashValueUsd)} / ${formatYen(cashValueUsd * exchangeRate)}`));
+    chartList.appendChild(chartRow);
+  });
+
+  chart.appendChild(chartList);
+}
+
+// ドル建生命保険セクション全体を描画します。
+function renderDollarInsuranceSection() {
+  ensureDollarInsuranceSection();
+  renderDollarInsuranceSummary();
+  renderDollarInsuranceForm();
+  renderDollarInsuranceChart();
+}
+
 // 表のセルを追加します。
 function appendTableCell(row, text, className, isNegative) {
   const cell = document.createElement("td");
@@ -1498,30 +2722,52 @@ function appendTableHeaderCell(row, text) {
 function renderLifePlanTableHeader(table, family) {
   const tableHead = document.createElement("thead");
   const row = document.createElement("tr");
-  const headers = [
-    "年"
-  ].concat(
-    family.map(function (member) {
-      return member.name || "名前未設定";
-    }),
-    [
-      "イベント",
-      "イベント支出",
-      "年間収入",
-      "通常支出",
-      "年間収支",
-      "年初資産",
-      "年末資産",
-      "住宅ローン年初残高",
-      "住宅ローン年末残高",
-      "住宅ローン年間利息",
-      "純資産見込み"
-    ]
-  );
 
-  headers.forEach(function (header) {
-    appendTableHeaderCell(row, header);
-  });
+  appendTableHeaderCell(row, "年");
+
+  if (isTableColumnVisible("familyAges")) {
+    family.forEach(function (member) {
+      appendTableHeaderCell(row, member.name || "名前未設定");
+    });
+  }
+
+  appendTableHeaderCell(row, "イベント");
+
+  if (isTableColumnVisible("eventExpenses")) {
+    appendTableHeaderCell(row, "イベント支出");
+  }
+
+  if (isTableColumnVisible("income")) {
+    appendTableHeaderCell(row, "年間収入");
+  }
+
+  if (isTableColumnVisible("regularExpenses")) {
+    appendTableHeaderCell(row, "通常支出");
+  }
+
+  if (isTableColumnVisible("annualBalance")) {
+    appendTableHeaderCell(row, "年間収支");
+  }
+
+  if (isTableColumnVisible("yearEndAssets")) {
+    appendTableHeaderCell(row, "年初資産");
+    appendTableHeaderCell(row, "年末資産");
+  }
+
+  if (isTableColumnVisible("mortgage")) {
+    appendTableHeaderCell(row, "住宅ローン年初残高");
+    appendTableHeaderCell(row, "住宅ローン年末残高");
+    appendTableHeaderCell(row, "住宅ローン年間利息");
+  }
+
+  if (isTableColumnVisible("netAssets")) {
+    appendTableHeaderCell(row, "純資産見込み");
+  }
+
+  if (isTableColumnVisible("dollarInsurance")) {
+    appendTableHeaderCell(row, "ドル建保険 解約返戻金USD（参考）");
+    appendTableHeaderCell(row, "ドル建保険 円換算（総資産外）");
+  }
 
   tableHead.appendChild(row);
   table.appendChild(tableHead);
@@ -1547,6 +2793,7 @@ function renderLifePlanTable() {
   const family = Array.isArray(lifePlanData && lifePlanData.family) ? lifePlanData.family : [];
 
   clearElement(table);
+  table.classList.toggle("life-plan-table-compact", isCompactLifePlanTable());
   renderLifePlanTableHeader(table, family);
   const tableBody = createLifePlanTableBody(table);
 
@@ -1566,24 +2813,52 @@ function renderLifePlanTable() {
     }
 
     appendTableCell(row, `${result.year}年`);
-    family.forEach(function (member) {
-      const ageInfo = result.familyAges.find(function (familyAge) {
-        return familyAge.id === member.id;
+    if (isTableColumnVisible("familyAges")) {
+      family.forEach(function (member) {
+        const ageInfo = result.familyAges.find(function (familyAge) {
+          return familyAge.id === member.id;
+        });
+        const ageText = ageInfo && ageInfo.age !== null ? `${ageInfo.age}歳` : "-";
+        appendTableCell(row, ageText);
       });
-      const ageText = ageInfo && ageInfo.age !== null ? `${ageInfo.age}歳` : "-";
-      appendTableCell(row, ageText);
-    });
+    }
     appendTableCell(row, eventText);
-    appendTableCell(row, formatYen(result.eventExpenseTotal), "number-cell");
-    appendTableCell(row, formatYen(result.annualIncome), "number-cell");
-    appendTableCell(row, formatYen(result.regularExpenses), "number-cell");
-    appendTableCell(row, formatYen(result.annualBalance), "number-cell", result.annualBalance < 0);
-    appendTableCell(row, formatYen(result.startAssets), "number-cell");
-    appendTableCell(row, formatYen(result.endAssets), "number-cell", result.endAssets < 0);
-    appendTableCell(row, formatYen(result.mortgageStartBalance), "number-cell");
-    appendTableCell(row, formatYen(result.mortgageEndBalance), "number-cell");
-    appendTableCell(row, formatYen(result.mortgageAnnualInterest), "number-cell");
-    appendTableCell(row, formatYen(result.estimatedNetAssets), "number-cell", result.estimatedNetAssets < 0);
+
+    if (isTableColumnVisible("eventExpenses")) {
+      appendTableCell(row, formatYenForTable(result.eventExpenseTotal), "number-cell");
+    }
+
+    if (isTableColumnVisible("income")) {
+      appendTableCell(row, formatYenForTable(result.annualIncome), "number-cell");
+    }
+
+    if (isTableColumnVisible("regularExpenses")) {
+      appendTableCell(row, formatYenForTable(result.regularExpenses), "number-cell");
+    }
+
+    if (isTableColumnVisible("annualBalance")) {
+      appendTableCell(row, formatYenForTable(result.annualBalance), "number-cell", result.annualBalance < 0);
+    }
+
+    if (isTableColumnVisible("yearEndAssets")) {
+      appendTableCell(row, formatYenForTable(result.startAssets), "number-cell");
+      appendTableCell(row, formatYenForTable(result.endAssets), "number-cell", result.endAssets < 0);
+    }
+
+    if (isTableColumnVisible("mortgage")) {
+      appendTableCell(row, formatYenForTable(result.mortgageStartBalance), "number-cell");
+      appendTableCell(row, formatYenForTable(result.mortgageEndBalance), "number-cell");
+      appendTableCell(row, formatYenForTable(result.mortgageAnnualInterest), "number-cell");
+    }
+
+    if (isTableColumnVisible("netAssets")) {
+      appendTableCell(row, formatYenForTable(result.estimatedNetAssets), "number-cell", result.estimatedNetAssets < 0);
+    }
+
+    if (isTableColumnVisible("dollarInsurance")) {
+      appendTableCell(row, result.dollarInsuranceCashValueUsd > 0 ? formatUsdForTable(result.dollarInsuranceCashValueUsd) : "-", "number-cell");
+      appendTableCell(row, result.dollarInsuranceCashValueJpy > 0 ? formatYenForTable(result.dollarInsuranceCashValueJpy) : "-", "number-cell");
+    }
 
     tableBody.appendChild(row);
   });
@@ -1679,7 +2954,13 @@ function renderDataManagement() {
   const description = createTextElement("p", "list-meta", "バックアップ用にJSONファイルを書き出し・読み込みできます");
   const buttonRow = document.createElement("div");
   const exportButton = document.createElement("button");
+  const showBackupButton = document.createElement("button");
+  const copyBackupButton = document.createElement("button");
+  const backupToggleButton = document.createElement("button");
   const importInput = document.createElement("input");
+  const backupPanel = document.createElement("div");
+  const backupTextArea = document.createElement("textarea");
+  const backupPanelConfig = getFormPanelConfig("backupText");
 
   buttonRow.className = "button-row";
   exportButton.type = "button";
@@ -1687,6 +2968,25 @@ function renderDataManagement() {
   exportButton.className = "secondary-button";
   exportButton.textContent = "JSONエクスポート";
   exportButton.addEventListener("click", exportJson);
+
+  showBackupButton.type = "button";
+  showBackupButton.id = "show-backup-text-button";
+  showBackupButton.className = "secondary-button";
+  showBackupButton.textContent = "バックアップ文字列を表示";
+  showBackupButton.addEventListener("click", showBackupText);
+
+  copyBackupButton.type = "button";
+  copyBackupButton.id = "copy-backup-text-button";
+  copyBackupButton.className = "secondary-button";
+  copyBackupButton.textContent = "バックアップ文字列をコピー";
+  copyBackupButton.addEventListener("click", copyBackupText);
+
+  backupToggleButton.type = "button";
+  backupToggleButton.id = backupPanelConfig.buttonId;
+  backupToggleButton.className = "form-toggle-button secondary-button";
+  backupToggleButton.addEventListener("click", function () {
+    toggleFormPanel("backupText");
+  });
 
   importInput.type = "file";
   importInput.id = "import-json-input";
@@ -1697,10 +2997,97 @@ function renderDataManagement() {
     event.target.value = "";
   });
 
+  backupTextArea.id = "backup-json-text";
+  backupTextArea.rows = 12;
+  backupTextArea.readOnly = true;
+  backupTextArea.style.width = "100%";
+  backupTextArea.style.marginTop = "12px";
+  backupTextArea.setAttribute("aria-label", "バックアップ文字列");
+
+  backupPanel.id = backupPanelConfig.panelId;
+  backupPanel.className = "form-panel";
+  backupPanel.appendChild(backupTextArea);
+
   buttonRow.appendChild(exportButton);
+  buttonRow.appendChild(showBackupButton);
+  buttonRow.appendChild(copyBackupButton);
+  buttonRow.appendChild(backupToggleButton);
   buttonRow.appendChild(importInput);
   extraArea.appendChild(description);
   extraArea.appendChild(buttonRow);
+  extraArea.appendChild(backupPanel);
+  applyFormPanelState("backupText");
+}
+
+// iPhone Safari などでファイル保存が見つからない場合に、JSON文字列を画面へ表示します。
+function showBackupText() {
+  const backupTextArea = getElement("backup-json-text");
+
+  if (!backupTextArea) {
+    showMessage("バックアップ文字列の表示領域が見つかりません", "error");
+    return;
+  }
+
+  try {
+    backupTextArea.value = JSON.stringify(lifePlanData, null, 2);
+    openFormPanel("backupText");
+    backupTextArea.focus();
+    showMessage("バックアップ文字列を表示しました", "success");
+  } catch (error) {
+    console.warn("バックアップ文字列の表示に失敗しました。", error);
+    showMessage("バックアップ文字列の表示に失敗しました", "error");
+  }
+}
+
+// バックアップ文字列をクリップボードへコピーします。
+function copyBackupText() {
+  const backupTextArea = getElement("backup-json-text");
+
+  if (!backupTextArea) {
+    showMessage("バックアップ文字列の表示領域が見つかりません", "error");
+    return;
+  }
+
+  if (!backupTextArea.value) {
+    showBackupText();
+  }
+
+  const backupText = backupTextArea.value;
+
+  openFormPanel("backupText");
+  backupTextArea.focus();
+  backupTextArea.select();
+
+  if (typeof backupTextArea.setSelectionRange === "function") {
+    backupTextArea.setSelectionRange(0, backupText.length);
+  }
+
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.clipboard &&
+    typeof navigator.clipboard.writeText === "function"
+  ) {
+    navigator.clipboard.writeText(backupText)
+      .then(function () {
+        showMessage("バックアップ文字列をコピーしました", "success");
+      })
+      .catch(function (error) {
+        console.warn("バックアップ文字列のコピーに失敗しました。", error);
+        showMessage("手動で全選択してコピーしてください", "error");
+      });
+    return;
+  }
+
+  try {
+    if (typeof document.execCommand === "function" && document.execCommand("copy")) {
+      showMessage("バックアップ文字列をコピーしました", "success");
+      return;
+    }
+  } catch (error) {
+    console.warn("バックアップ文字列のコピーに失敗しました。", error);
+  }
+
+  showMessage("手動で全選択してコピーしてください", "error");
 }
 
 // 現在のデータをJSONファイルとして書き出します。
@@ -1800,15 +3187,18 @@ function runRenderStep(renderFunction, name) {
 function renderAll() {
   lifePlanResults = calculateLifePlan(lifePlanData);
   runRenderStep(renderDashboard, "ダッシュボード");
+  runRenderStep(renderCalculationSettingsSection, "計算設定");
   runRenderStep(renderFamilyList, "家族一覧");
   runRenderStep(renderFamilyForm, "家族追加・編集フォーム");
   runRenderStep(renderEventList, "イベント一覧");
   runRenderStep(renderEventForm, "イベント追加フォーム");
   runRenderStep(renderFinanceSummaries, "資産・収入・支出サマリー");
   runRenderStep(renderFinanceForm, "資産・収入・支出編集フォーム");
+  runRenderStep(renderDollarInsuranceSection, "ドル建生命保険");
   runRenderStep(renderLifePlanTable, "ライフプラン表");
   runRenderStep(renderAssetChart, "年末資産グラフ");
   runRenderStep(renderDataManagement, "データ管理");
+  runRenderStep(setupCollapsibleSections, "セクション開閉");
 }
 
 // 古い再描画入口を残し、renderAll に処理を集約します。
@@ -1820,6 +3210,7 @@ function renderApp() {
 function initApp() {
   try {
     lifePlanData = loadData();
+    lifePlanUiState = loadUiState();
     lifePlanResults = calculateLifePlan(lifePlanData);
 
     const saveButton = getElement("save-data-button");

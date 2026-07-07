@@ -40,6 +40,11 @@ button:active {
   transform: translateY(1px);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -88,6 +93,46 @@ section h2 {
   margin: 0 0 18px;
   font-size: 1.25rem;
   line-height: 1.4;
+}
+
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.collapsible-header h2 {
+  margin: 0;
+}
+
+.section-toggle-button,
+.form-toggle-button {
+  min-height: 40px;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+
+.section-toggle-button {
+  min-width: 76px;
+}
+
+.collapsible-content[hidden],
+.form-panel[hidden] {
+  display: none;
+}
+
+.is-collapsed {
+  box-shadow: 0 4px 14px rgba(36, 48, 58, 0.05);
+}
+
+.form-toggle-button {
+  margin: 0 0 12px;
+}
+
+.form-panel {
+  margin: 0 0 16px;
 }
 
 .dashboard-grid {
@@ -156,6 +201,20 @@ section h2 {
   margin: 8px 0 0;
   color: #4b5963;
   font-size: 0.92rem;
+}
+
+.list-card .button-row {
+  margin-top: 12px;
+}
+
+.event-action-row {
+  align-items: stretch;
+}
+
+.small-button {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 0.9rem;
 }
 
 .table-scroll {
@@ -326,6 +385,35 @@ td {
   gap: 6px;
 }
 
+.full-width-field {
+  margin: 14px 0;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 10px;
+  background: #f7faf9;
+  border: 1px solid #dfe8e6;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.checkbox-field input {
+  width: auto;
+  min-width: 18px;
+  min-height: 18px;
+}
+
 label {
   color: #394750;
   font-size: 0.9rem;
@@ -346,6 +434,35 @@ textarea {
 textarea {
   min-height: 96px;
   resize: vertical;
+}
+
+#backup-json-text {
+  min-height: 220px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+#dollar-insurance-schedule-text {
+  min-height: 260px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.dollar-insurance-chart-list .chart-row {
+  grid-template-columns: 72px minmax(120px, 1fr) 220px;
+}
+
+.life-plan-table-compact {
+  min-width: 720px;
+}
+
+.life-plan-table-compact th,
+.life-plan-table-compact td {
+  padding: 6px 7px;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 @media (max-width: 700px) {
@@ -395,6 +512,14 @@ textarea {
     grid-template-columns: 54px minmax(120px, 1fr);
   }
 
+  .dollar-insurance-chart-list .chart-row {
+    grid-template-columns: 54px minmax(120px, 1fr);
+  }
+
+  .checkbox-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chart-value {
     grid-column: 2;
     text-align: left;
@@ -412,6 +537,22 @@ textarea {
     padding: 12px 16px;
   }
 
+  .section-toggle-button {
+    width: auto;
+    min-width: 72px;
+    padding: 10px 12px;
+  }
+
+  .form-toggle-button,
+  .event-action-row button {
+    width: 100%;
+  }
+
+  .collapsible-header {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
   .table-scroll {
     margin: 0 -4px;
     padding-bottom: 6px;
@@ -419,6 +560,10 @@ textarea {
 
   table {
     min-width: 840px;
+  }
+
+  .life-plan-table-compact {
+    min-width: 680px;
   }
 
   th,
