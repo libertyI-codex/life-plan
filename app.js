@@ -209,6 +209,171 @@ function setCompactLifePlanTable(isCompact) {
   saveUiState();
 }
 
+// 金額内訳の1行を安全な形に整えます。
+function createFinanceItem(id, name, amount, memo) {
+  return {
+    id: id,
+    name: name,
+    amount: toNumber(amount),
+    memo: memo || ""
+  };
+}
+
+// 保存済みの内訳配列を安全な形に整え、なければ移行用の初期行を使います。
+function normalizeFinanceItems(items, fallbackItems) {
+  const sourceItems = Array.isArray(items) ? items : fallbackItems;
+
+  return (Array.isArray(sourceItems) ? sourceItems : [])
+    .map(function (item, index) {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      return createFinanceItem(
+        item.id || createId("finance_item"),
+        item.name || `項目${index + 1}`,
+        item.amount,
+        item.memo || ""
+      );
+    })
+    .filter(Boolean);
+}
+
+// 金額内訳の合計を計算します。
+function sumFinanceItems(items) {
+  return (Array.isArray(items) ? items : []).reduce(function (total, item) {
+    return total + toNumber(item && item.amount);
+  }, 0);
+}
+
+// 指定名の内訳金額を取得します。
+function getFinanceItemAmountByName(items, name) {
+  const matchedItem = (Array.isArray(items) ? items : []).find(function (item) {
+    return item && item.name === name;
+  });
+
+  return matchedItem ? toNumber(matchedItem.amount) : 0;
+}
+
+// 現金預金の旧データを口座別内訳へ移行します。
+function getDefaultCashAccounts(assets) {
+  return [
+    createFinanceItem(
+      "cash-legacy",
+      "現金預金",
+      hasValue(assets && assets.cash) ? assets.cash : 0,
+      hasValue(assets && assets.cash) ? "旧データから移行" : ""
+    )
+  ];
+}
+
+// 投資資産の旧データを内訳へ移行します。
+function getDefaultInvestmentItems(assets) {
+  return [
+    createFinanceItem("investment-japan-stock", "日本株式", 0, ""),
+    createFinanceItem("investment-us-stock", "米国株式", 0, ""),
+    createFinanceItem(
+      "investment-fund",
+      "投資信託",
+      hasValue(assets && assets.investments) ? assets.investments : 0,
+      hasValue(assets && assets.investments) ? "旧データの投資資産から移行" : ""
+    )
+  ];
+}
+
+// 毎月支出の旧データを項目別内訳へ移行します。
+function getDefaultMonthlyExpenseItems(expenses) {
+  return [
+    createFinanceItem("monthly-mortgage", "住宅ローン", expenses && expenses.mortgageMonthly, ""),
+    createFinanceItem("monthly-food", "食費", expenses && expenses.livingMonthly, hasValue(expenses && expenses.livingMonthly) ? "旧データの生活費から移行" : ""),
+    createFinanceItem("monthly-communication", "通信費", 0, ""),
+    createFinanceItem("monthly-utilities", "光熱費", 0, ""),
+    createFinanceItem("monthly-insurance", "保険", expenses && expenses.insuranceMonthly, ""),
+    createFinanceItem("monthly-education", "教育費", expenses && expenses.educationMonthly, ""),
+    createFinanceItem("monthly-car", "車関連", expenses && expenses.carMonthly, ""),
+    createFinanceItem(
+      "monthly-other-fixed",
+      "その他固定費",
+      hasValue(expenses && expenses.otherFixedMonthly)
+        ? expenses.otherFixedMonthly
+        : hasValue(expenses && expenses.otherMonthly)
+          ? expenses.otherMonthly
+          : 0,
+      ""
+    )
+  ];
+}
+
+// 毎年支出の初期項目を作ります。
+function getDefaultAnnualExpenseItems() {
+  return [
+    createFinanceItem("annual-property-tax", "固都税", 0, ""),
+    createFinanceItem("annual-car-tax", "自動車税", 0, "")
+  ];
+}
+
+// 現金預金合計を取得します。
+function calculateCashTotal(data) {
+  const assets = data && data.assets ? data.assets : {};
+  return Array.isArray(assets.cashAccounts) ? sumFinanceItems(assets.cashAccounts) : toNumber(assets.cash);
+}
+
+// 投資資産合計を取得します。
+function calculateInvestmentTotal(data) {
+  const assets = data && data.assets ? data.assets : {};
+  return Array.isArray(assets.investmentItems) ? sumFinanceItems(assets.investmentItems) : toNumber(assets.investments);
+}
+
+// 毎月支出合計を取得します。
+function calculateMonthlyExpenseTotal(data) {
+  const expenses = data && data.expenses ? data.expenses : {};
+
+  if (Array.isArray(expenses.monthlyItems)) {
+    return sumFinanceItems(expenses.monthlyItems);
+  }
+
+  return (
+    toNumber(expenses.livingMonthly) +
+    toNumber(expenses.mortgageMonthly) +
+    toNumber(expenses.insuranceMonthly) +
+    toNumber(expenses.educationMonthly) +
+    toNumber(expenses.carMonthly) +
+    toNumber(expenses.otherFixedMonthly)
+  );
+}
+
+// 毎年支出合計を取得します。
+function calculateAnnualExpenseItemTotal(data) {
+  const expenses = data && data.expenses ? data.expenses : {};
+  return Array.isArray(expenses.annualItems) ? sumFinanceItems(expenses.annualItems) : 0;
+}
+
+// 内訳合計と旧フィールドを同期し、古い処理やJSONとの互換性を保ちます。
+function syncLegacyFinanceFields(data) {
+  if (!data || typeof data !== "object") {
+    return data;
+  }
+
+  const assets = data.assets || {};
+  const expenses = data.expenses || {};
+
+  assets.cash = calculateCashTotal(data);
+  assets.investments = calculateInvestmentTotal(data);
+  expenses.mortgageMonthly = getFinanceItemAmountByName(expenses.monthlyItems, "住宅ローン");
+  expenses.livingMonthly =
+    getFinanceItemAmountByName(expenses.monthlyItems, "食費") +
+    getFinanceItemAmountByName(expenses.monthlyItems, "通信費") +
+    getFinanceItemAmountByName(expenses.monthlyItems, "光熱費");
+  expenses.insuranceMonthly = getFinanceItemAmountByName(expenses.monthlyItems, "保険");
+  expenses.educationMonthly = getFinanceItemAmountByName(expenses.monthlyItems, "教育費");
+  expenses.carMonthly = getFinanceItemAmountByName(expenses.monthlyItems, "車関連");
+  expenses.otherFixedMonthly = getFinanceItemAmountByName(expenses.monthlyItems, "その他固定費");
+
+  data.assets = assets;
+  data.expenses = expenses;
+  return data;
+}
+
 // 古い保存データに足りない項目を補完します。
 function ensureDataShape(data) {
   const shapedData = data && typeof data === "object" && !Array.isArray(data) ? data : {};
@@ -271,6 +436,24 @@ function ensureDataShape(data) {
     shapedData.mortgage = {};
   }
 
+  shapedData.assets.cashAccounts = normalizeFinanceItems(
+    shapedData.assets.cashAccounts,
+    getDefaultCashAccounts(shapedData.assets)
+  );
+  shapedData.assets.investmentItems = normalizeFinanceItems(
+    shapedData.assets.investmentItems,
+    getDefaultInvestmentItems(shapedData.assets)
+  );
+  shapedData.expenses.monthlyItems = normalizeFinanceItems(
+    shapedData.expenses.monthlyItems,
+    getDefaultMonthlyExpenseItems(shapedData.expenses)
+  );
+  shapedData.expenses.annualItems = normalizeFinanceItems(
+    shapedData.expenses.annualItems,
+    getDefaultAnnualExpenseItems()
+  );
+  syncLegacyFinanceFields(shapedData);
+
   if (!hasValue(shapedData.mortgage.currentBalance)) {
     shapedData.mortgage.currentBalance = hasValue(shapedData.assets.liabilities)
       ? toNumber(shapedData.assets.liabilities)
@@ -327,6 +510,7 @@ function ensureDataShape(data) {
     shapedData.dollarInsurance.schedule = parseDollarInsuranceScheduleText(shapedData.dollarInsurance.scheduleText);
   }
 
+  syncLegacyFinanceFields(shapedData);
   return shapedData;
 }
 
@@ -400,8 +584,8 @@ function getFormPanelConfig(formKey) {
     dollarInsuranceForm: {
       buttonId: "dollar-insurance-form-toggle-button",
       panelId: "dollar-insurance-form-panel",
-      openLabel: "保険入力欄を開く",
-      closeLabel: "保険入力欄を閉じる"
+      openLabel: "終身保険入力欄を開く",
+      closeLabel: "終身保険入力欄を閉じる"
     },
     backupText: {
       buttonId: "backup-text-toggle-button",
@@ -819,7 +1003,7 @@ function splitDollarInsuranceCsvLine(line) {
   return fields;
 }
 
-// CSV風テキストの1行をドル建生命保険の行データへ変換します。
+// CSV風テキストの1行をドル建終身保険の行データへ変換します。
 function parseDollarInsuranceScheduleLine(line) {
   const columns = splitDollarInsuranceCsvLine(line).map(function (column) {
     return String(column || "").trim();
@@ -879,7 +1063,7 @@ function normalizeDollarInsuranceSchedule(schedule) {
     });
 }
 
-// 対象者の年齢に一致するドル建生命保険の行を探します。
+// 対象者の年齢に一致するドル建終身保険の行を探します。
 function findDollarInsuranceRowByAge(data, age) {
   const insurance = data && data.dollarInsurance ? data.dollarInsurance : {};
   const schedule = Array.isArray(insurance.schedule) ? insurance.schedule : [];
@@ -890,7 +1074,7 @@ function findDollarInsuranceRowByAge(data, age) {
   }) || null;
 }
 
-// 指定年のライフプラン表用に、ドル建生命保険の参考額を取得します。
+// 指定年のライフプラン表用に、ドル建終身保険の参考額を取得します。
 function getDollarInsuranceReferenceForYear(data, year) {
   const insurance = data && data.dollarInsurance ? data.dollarInsurance : {};
   const family = Array.isArray(data && data.family) ? data.family : [];
@@ -900,6 +1084,8 @@ function getDollarInsuranceReferenceForYear(data, year) {
 
   if (!insurance.enabled || !targetFamily) {
     return {
+      dollarInsuranceCumulativePremiumUsd: 0,
+      dollarInsuranceCumulativePremiumJpy: 0,
       dollarInsuranceCashValueUsd: 0,
       dollarInsuranceCashValueJpy: 0,
       dollarInsuranceReturnRate: 0
@@ -908,10 +1094,13 @@ function getDollarInsuranceReferenceForYear(data, year) {
 
   const targetAge = calculateAgeInYear(targetFamily.birthDate, year);
   const matchedRow = targetAge === null ? null : findDollarInsuranceRowByAge(data, targetAge);
+  const cumulativePremiumUsd = matchedRow ? toNumber(matchedRow.cumulativePremiumUsd) : 0;
   const cashValueUsd = matchedRow ? toNumber(matchedRow.cashValueUsd) : 0;
   const exchangeRate = toNumber(insurance.exchangeRate);
 
   return {
+    dollarInsuranceCumulativePremiumUsd: cumulativePremiumUsd,
+    dollarInsuranceCumulativePremiumJpy: cumulativePremiumUsd * exchangeRate,
     dollarInsuranceCashValueUsd: cashValueUsd,
     dollarInsuranceCashValueJpy: cashValueUsd * exchangeRate,
     dollarInsuranceReturnRate: matchedRow ? toNumber(matchedRow.returnRate) : 0
@@ -951,8 +1140,8 @@ function calculateTotalAssets(data) {
   const assets = data.assets || {};
 
   return (
-    toNumber(assets.cash) +
-    toNumber(assets.investments) +
+    calculateCashTotal(data) +
+    calculateInvestmentTotal(data) +
     toNumber(assets.insurance) +
     toNumber(assets.otherAssets)
   );
@@ -979,16 +1168,7 @@ function calculateAnnualIncome(data, year) {
 
 // 通常の年間支出を計算します。
 function calculateAnnualRegularExpenses(data) {
-  const expenses = data.expenses || {};
-  const monthlyTotal =
-    toNumber(expenses.livingMonthly) +
-    toNumber(expenses.mortgageMonthly) +
-    toNumber(expenses.insuranceMonthly) +
-    toNumber(expenses.educationMonthly) +
-    toNumber(expenses.carMonthly) +
-    toNumber(expenses.otherFixedMonthly);
-
-  return monthlyTotal * 12;
+  return calculateMonthlyExpenseTotal(data) * 12 + calculateAnnualExpenseItemTotal(data);
 }
 
 // 住宅ローン残高の年ごとの概算推移を計算します。
@@ -1118,6 +1298,8 @@ function calculateLifePlan(data) {
         mortgageAnnualPrincipal: mortgageInfo.mortgageAnnualPrincipal,
         mortgageAnnualInterest: mortgageInfo.mortgageAnnualInterest,
         estimatedNetAssets: endAssets - mortgageInfo.mortgageEndBalance,
+        dollarInsuranceCumulativePremiumUsd: dollarInsuranceReference.dollarInsuranceCumulativePremiumUsd,
+        dollarInsuranceCumulativePremiumJpy: dollarInsuranceReference.dollarInsuranceCumulativePremiumJpy,
         dollarInsuranceCashValueUsd: dollarInsuranceReference.dollarInsuranceCashValueUsd,
         dollarInsuranceCashValueJpy: dollarInsuranceReference.dollarInsuranceCashValueJpy,
         dollarInsuranceReturnRate: dollarInsuranceReference.dollarInsuranceReturnRate
@@ -1520,7 +1702,7 @@ function getTableColumnConfig() {
     { key: "yearEndAssets", label: "年末資産" },
     { key: "mortgage", label: "住宅ローン" },
     { key: "netAssets", label: "純資産" },
-    { key: "dollarInsurance", label: "ドル建生命保険" }
+    { key: "dollarInsurance", label: "ドル建終身保険" }
   ];
 }
 
@@ -1775,11 +1957,14 @@ function renderFinanceSummaries() {
 
   const assets = lifePlanData.assets || {};
   const income = lifePlanData.income || {};
-  const expenses = lifePlanData.expenses || {};
+  const cashTotal = calculateCashTotal(lifePlanData);
+  const investmentTotal = calculateInvestmentTotal(lifePlanData);
+  const monthlyExpenseTotal = calculateMonthlyExpenseTotal(lifePlanData);
+  const annualExpenseTotal = calculateAnnualExpenseItemTotal(lifePlanData);
 
   renderSummaryCard("asset-summary", "現在資産", [
-    { label: "現金・預金", value: formatYen(assets.cash) },
-    { label: "投資資産", value: formatYen(assets.investments) },
+    { label: "現金預金合計", value: formatYen(cashTotal) },
+    { label: "投資資産合計", value: formatYen(investmentTotal) },
     { label: "保険解約返戻金", value: formatYen(assets.insurance) },
     { label: "その他資産", value: formatYen(assets.otherAssets) },
     { label: "負債", value: formatYen(assets.liabilities) },
@@ -1799,12 +1984,9 @@ function renderFinanceSummaries() {
   ]);
 
   renderSummaryCard("expense-summary", "支出", [
-    { label: "生活費 月額", value: formatYen(expenses.livingMonthly) },
-    { label: "住宅ローン 月額", value: formatYen(expenses.mortgageMonthly) },
-    { label: "保険 月額", value: formatYen(expenses.insuranceMonthly) },
-    { label: "教育費 月額", value: formatYen(expenses.educationMonthly) },
-    { label: "車関連 月額", value: formatYen(expenses.carMonthly) },
-    { label: "その他固定費 月額", value: formatYen(expenses.otherFixedMonthly) },
+    { label: "毎月支出合計", value: formatYen(monthlyExpenseTotal) },
+    { label: "毎月支出の年間換算", value: formatYen(monthlyExpenseTotal * 12) },
+    { label: "毎年支出合計", value: formatYen(annualExpenseTotal) },
     { label: "通常年間支出", value: formatYen(calculateAnnualRegularExpenses(lifePlanData)) }
   ]);
 }
@@ -1854,6 +2036,162 @@ function appendFinanceFormGroup(form, title, fields, note) {
   }
 
   form.appendChild(group);
+}
+
+// 内訳行の入力欄を作ります。
+function createFinanceItemInput(type, className, value, label, step) {
+  const input = document.createElement(type === "textarea" ? "textarea" : "input");
+
+  if (type !== "textarea") {
+    input.type = type;
+  }
+
+  input.className = className;
+  input.value = type === "number" ? toNumber(value) : value || "";
+  input.setAttribute("aria-label", label);
+
+  if (type === "number") {
+    input.step = step || "1";
+    input.inputMode = "numeric";
+  }
+
+  return input;
+}
+
+// 資産・支出の内訳編集行を追加します。
+function appendFinanceItemEditorRow(list, item, prefix) {
+  const row = document.createElement("div");
+  const deleteButton = document.createElement("button");
+  const safeItem = item || createFinanceItem(createId(prefix), "", 0, "");
+
+  row.className = "finance-item-row";
+  row.dataset.itemId = safeItem.id || createId(prefix);
+  row.appendChild(createFinanceItemInput("text", "finance-item-name", safeItem.name, "項目名"));
+  row.appendChild(createFinanceItemInput("number", "finance-item-amount", safeItem.amount, "金額"));
+  row.appendChild(createFinanceItemInput("text", "finance-item-memo", safeItem.memo, "メモ"));
+
+  deleteButton.type = "button";
+  deleteButton.className = "danger-button finance-item-delete-button";
+  deleteButton.textContent = "削除";
+  deleteButton.addEventListener("click", function () {
+    row.remove();
+    updateFinanceItemTotals();
+  });
+  row.appendChild(deleteButton);
+
+  Array.prototype.slice.call(row.querySelectorAll("input")).forEach(function (input) {
+    input.addEventListener("input", updateFinanceItemTotals);
+  });
+
+  list.appendChild(row);
+}
+
+// 内訳入力エリアを作ります。
+function appendFinanceItemEditorSection(form, options) {
+  const group = document.createElement("div");
+  const header = document.createElement("div");
+  const list = document.createElement("div");
+  const addButton = document.createElement("button");
+  const totalText = document.createElement("p");
+
+  group.className = "list-card finance-item-editor";
+  header.className = "finance-item-editor-header";
+  list.id = options.listId;
+  list.className = "finance-item-list";
+  totalText.id = options.totalId;
+  totalText.className = "list-meta finance-item-total";
+
+  header.appendChild(createTextElement("h3", "list-title", options.title));
+  addButton.type = "button";
+  addButton.className = "secondary-button small-button";
+  addButton.textContent = options.addButtonText || "項目を追加";
+  addButton.addEventListener("click", function () {
+    appendFinanceItemEditorRow(list, createFinanceItem(createId(options.itemPrefix), "", 0, ""), options.itemPrefix);
+    updateFinanceItemTotals();
+  });
+  header.appendChild(addButton);
+
+  group.appendChild(header);
+
+  if (options.note) {
+    group.appendChild(createTextElement("p", "list-memo", options.note));
+  }
+
+  (Array.isArray(options.items) ? options.items : []).forEach(function (item) {
+    appendFinanceItemEditorRow(list, item, options.itemPrefix);
+  });
+
+  group.appendChild(list);
+  group.appendChild(totalText);
+
+  if (options.annualizedId) {
+    const annualizedText = document.createElement("p");
+    annualizedText.id = options.annualizedId;
+    annualizedText.className = "list-meta finance-item-total";
+    group.appendChild(annualizedText);
+  }
+
+  form.appendChild(group);
+}
+
+// 内訳入力欄から行データを集めます。
+function collectFinanceItems(listId, prefix) {
+  const list = getElement(listId);
+
+  if (!list || !list.querySelectorAll) {
+    return [];
+  }
+
+  return Array.prototype.slice
+    .call(list.querySelectorAll(".finance-item-row"))
+    .map(function (row) {
+      const nameInput = row.querySelector(".finance-item-name");
+      const amountInput = row.querySelector(".finance-item-amount");
+      const memoInput = row.querySelector(".finance-item-memo");
+      const name = String((nameInput && nameInput.value) || "").trim();
+      const amount = toNumber(amountInput && amountInput.value);
+      const memo = String((memoInput && memoInput.value) || "").trim();
+
+      if (!name && amount === 0 && !memo) {
+        return null;
+      }
+
+      return createFinanceItem(row.dataset.itemId || createId(prefix), name || "未設定項目", amount, memo);
+    })
+    .filter(Boolean);
+}
+
+// 内訳入力中の合計表示を更新します。
+function updateFinanceItemTotals() {
+  const cashTotal = sumFinanceItems(collectFinanceItems("finance-cash-accounts-list", "cash"));
+  const investmentTotal = sumFinanceItems(collectFinanceItems("finance-investment-items-list", "investment"));
+  const monthlyTotal = sumFinanceItems(collectFinanceItems("finance-monthly-items-list", "monthly"));
+  const annualTotal = sumFinanceItems(collectFinanceItems("finance-annual-items-list", "annual"));
+  const cashElement = getElement("finance-cash-accounts-total");
+  const investmentElement = getElement("finance-investment-items-total");
+  const monthlyElement = getElement("finance-monthly-items-total");
+  const monthlyAnnualizedElement = getElement("finance-monthly-items-annualized-total");
+  const annualElement = getElement("finance-annual-items-total");
+
+  if (cashElement) {
+    cashElement.textContent = `現金預金合計: ${formatYen(cashTotal)}`;
+  }
+
+  if (investmentElement) {
+    investmentElement.textContent = `投資資産合計: ${formatYen(investmentTotal)}`;
+  }
+
+  if (monthlyElement) {
+    monthlyElement.textContent = `毎月支出合計: ${formatYen(monthlyTotal)}`;
+  }
+
+  if (monthlyAnnualizedElement) {
+    monthlyAnnualizedElement.textContent = `年間換算: ${formatYen(monthlyTotal * 12)}`;
+  }
+
+  if (annualElement) {
+    annualElement.textContent = `毎年支出合計: ${formatYen(annualTotal)}`;
+  }
 }
 
 // 指定した input の値を数値として取得します。
@@ -2330,9 +2668,27 @@ function renderFinanceForm() {
   form.appendChild(createTextElement("h3", "list-title", "資産・収入・支出を編集"));
   form.appendChild(createTextElement("p", "list-memo", getBaseYearDescription(lifePlanData.settings || {})));
 
-  appendFinanceFormGroup(form, "現在資産", [
-    { id: "finance-assets-cash", label: "現金・預金", value: assets.cash },
-    { id: "finance-assets-investments", label: "投資資産", value: assets.investments },
+  appendFinanceItemEditorSection(form, {
+    title: "現金預金",
+    listId: "finance-cash-accounts-list",
+    totalId: "finance-cash-accounts-total",
+    itemPrefix: "cash",
+    addButtonText: "口座を追加",
+    items: assets.cashAccounts,
+    note: "口座名・金額・メモを入力できます。現金預金合計を総資産計算に使います。"
+  });
+
+  appendFinanceItemEditorSection(form, {
+    title: "投資資産",
+    listId: "finance-investment-items-list",
+    totalId: "finance-investment-items-total",
+    itemPrefix: "investment",
+    addButtonText: "投資項目を追加",
+    items: assets.investmentItems,
+    note: "日本株式・米国株式・投資信託などの内訳を入力できます。投資資産合計を総資産計算に使います。"
+  });
+
+  appendFinanceFormGroup(form, "その他資産・負債", [
     { id: "finance-assets-insurance", label: "保険解約返戻金", value: assets.insurance },
     { id: "finance-assets-other-assets", label: "その他資産", value: assets.otherAssets },
     { id: "finance-assets-liabilities", label: "負債", value: assets.liabilities }
@@ -2345,14 +2701,26 @@ function renderFinanceForm() {
     { id: "finance-income-other-income", label: "その他収入", value: income.otherIncome }
   ]);
 
-  appendFinanceFormGroup(form, "毎月支出", [
-    { id: "finance-expenses-living-monthly", label: "生活費", value: expenses.livingMonthly },
-    { id: "finance-expenses-mortgage-monthly", label: "住宅ローン", value: expenses.mortgageMonthly },
-    { id: "finance-expenses-insurance-monthly", label: "保険", value: expenses.insuranceMonthly },
-    { id: "finance-expenses-education-monthly", label: "教育費", value: expenses.educationMonthly },
-    { id: "finance-expenses-car-monthly", label: "車関連", value: expenses.carMonthly },
-    { id: "finance-expenses-other-fixed-monthly", label: "その他固定費", value: expenses.otherFixedMonthly }
-  ]);
+  appendFinanceItemEditorSection(form, {
+    title: "毎月支出",
+    listId: "finance-monthly-items-list",
+    totalId: "finance-monthly-items-total",
+    annualizedId: "finance-monthly-items-annualized-total",
+    itemPrefix: "monthly",
+    addButtonText: "毎月支出を追加",
+    items: expenses.monthlyItems,
+    note: "住宅ローン残高推移の毎月返済額とは別管理です。必要に応じて同じ金額にしてください。通常支出は毎月支出合計×12に毎年支出を加えて計算します。"
+  });
+
+  appendFinanceItemEditorSection(form, {
+    title: "毎年支出",
+    listId: "finance-annual-items-list",
+    totalId: "finance-annual-items-total",
+    itemPrefix: "annual",
+    addButtonText: "毎年支出を追加",
+    items: expenses.annualItems,
+    note: "固都税・自動車税など、年1回程度の支出を入力します。"
+  });
 
   appendFinanceFormGroup(
     form,
@@ -2379,6 +2747,7 @@ function renderFinanceForm() {
   buttonRow.appendChild(submitButton);
   form.appendChild(buttonRow);
   panel.appendChild(form);
+  updateFinanceItemTotals();
   applyFormPanelState("financeForm");
 }
 
@@ -2390,13 +2759,18 @@ function handleFinanceFormSubmit(event) {
     lifePlanData = getInitialDataCopy();
   }
 
-  lifePlanData.assets = {
-    cash: getInputNumber("finance-assets-cash"),
-    investments: getInputNumber("finance-assets-investments"),
+  const cashAccounts = collectFinanceItems("finance-cash-accounts-list", "cash");
+  const investmentItems = collectFinanceItems("finance-investment-items-list", "investment");
+  const monthlyItems = collectFinanceItems("finance-monthly-items-list", "monthly");
+  const annualItems = collectFinanceItems("finance-annual-items-list", "annual");
+
+  lifePlanData.assets = Object.assign({}, lifePlanData.assets || {}, {
+    cashAccounts: cashAccounts,
+    investmentItems: investmentItems,
     insurance: getInputNumber("finance-assets-insurance"),
     otherAssets: getInputNumber("finance-assets-other-assets"),
     liabilities: getInputNumber("finance-assets-liabilities")
-  };
+  });
 
   lifePlanData.income = {
     salary: getInputNumber("finance-income-salary"),
@@ -2408,14 +2782,10 @@ function handleFinanceFormSubmit(event) {
       : []
   };
 
-  lifePlanData.expenses = {
-    livingMonthly: getInputNumber("finance-expenses-living-monthly"),
-    mortgageMonthly: getInputNumber("finance-expenses-mortgage-monthly"),
-    insuranceMonthly: getInputNumber("finance-expenses-insurance-monthly"),
-    educationMonthly: getInputNumber("finance-expenses-education-monthly"),
-    carMonthly: getInputNumber("finance-expenses-car-monthly"),
-    otherFixedMonthly: getInputNumber("finance-expenses-other-fixed-monthly")
-  };
+  lifePlanData.expenses = Object.assign({}, lifePlanData.expenses || {}, {
+    monthlyItems: monthlyItems,
+    annualItems: annualItems
+  });
 
   lifePlanData.mortgage = {
     currentBalance: getInputNumber("mortgage-current-balance"),
@@ -2423,7 +2793,7 @@ function handleFinanceFormSubmit(event) {
     monthlyPayment: getInputNumber("mortgage-monthly-payment")
   };
   lifePlanData.assets.liabilities = lifePlanData.mortgage.currentBalance;
-  lifePlanData.expenses.mortgageMonthly = lifePlanData.mortgage.monthlyPayment;
+  syncLegacyFinanceFields(lifePlanData);
 
   const saved = saveData();
   renderAll();
@@ -2433,7 +2803,7 @@ function handleFinanceFormSubmit(event) {
   }
 }
 
-// ドル建生命保険セクションを画面に用意します。
+// ドル建終身保険セクションを画面に用意します。
 function ensureDollarInsuranceSection() {
   let section = getElement("dollar-insurance-section");
 
@@ -2444,7 +2814,7 @@ function ensureDollarInsuranceSection() {
   section = document.createElement("section");
   section.id = "dollar-insurance-section";
   section.setAttribute("aria-labelledby", "dollar-insurance-heading");
-  section.appendChild(createTextElement("h2", "", "ドル建生命保険"));
+  section.appendChild(createTextElement("h2", "", "ドル建終身保険"));
 
   const heading = section.querySelector ? section.querySelector("h2") : null;
   if (heading) {
@@ -2475,7 +2845,7 @@ function ensureDollarInsuranceSection() {
   return section;
 }
 
-// ドル建生命保険の現在・最終サマリーを作ります。
+// ドル建終身保険の現在・最終サマリーを作ります。
 function getDollarInsuranceSummary(data) {
   const insurance = data && data.dollarInsurance ? data.dollarInsurance : {};
   const family = Array.isArray(data && data.family) ? data.family : [];
@@ -2494,16 +2864,20 @@ function getDollarInsuranceSummary(data) {
     targetName: targetFamily ? targetFamily.name : "未選択",
     currentAge: currentAge,
     currentRow: currentRow,
+    currentCumulativePremiumUsd: currentRow ? toNumber(currentRow.cumulativePremiumUsd) : 0,
+    currentCumulativePremiumJpy: currentRow ? toNumber(currentRow.cumulativePremiumUsd) * exchangeRate : 0,
     currentCashValueUsd: currentRow ? toNumber(currentRow.cashValueUsd) : 0,
     currentCashValueJpy: currentRow ? toNumber(currentRow.cashValueUsd) * exchangeRate : 0,
     finalAge: finalRow ? toNumber(finalRow.age) : null,
+    finalCumulativePremiumUsd: finalRow ? toNumber(finalRow.cumulativePremiumUsd) : 0,
+    finalCumulativePremiumJpy: finalRow ? toNumber(finalRow.cumulativePremiumUsd) * exchangeRate : 0,
     finalCashValueUsd: finalRow ? toNumber(finalRow.cashValueUsd) : 0,
     finalCashValueJpy: finalRow ? toNumber(finalRow.cashValueUsd) * exchangeRate : 0,
     returnRate: currentRow ? toNumber(currentRow.returnRate) : finalRow ? toNumber(finalRow.returnRate) : 0
   };
 }
 
-// ドル建生命保険のサマリーを表示します。
+// ドル建終身保険のサマリーを表示します。
 function renderDollarInsuranceSummary() {
   const summaryArea = getElement("dollar-insurance-summary");
 
@@ -2515,8 +2889,12 @@ function renderDollarInsuranceSummary() {
 
   const insurance = lifePlanData.dollarInsurance || {};
   const summary = getDollarInsuranceSummary(lifePlanData);
+  const currentPremiumUsdText = summary.currentRow ? formatUsd(summary.currentCumulativePremiumUsd) : "該当なし";
+  const currentPremiumJpyText = summary.currentRow ? formatYen(summary.currentCumulativePremiumJpy) : "該当なし";
   const currentUsdText = summary.currentRow ? formatUsd(summary.currentCashValueUsd) : "該当なし";
   const currentJpyText = summary.currentRow ? formatYen(summary.currentCashValueJpy) : "該当なし";
+  const finalPremiumUsdText = summary.finalAge === null ? "該当なし" : formatUsd(summary.finalCumulativePremiumUsd);
+  const finalPremiumJpyText = summary.finalAge === null ? "該当なし" : formatYen(summary.finalCumulativePremiumJpy);
   const finalUsdText = summary.finalAge === null ? "該当なし" : formatUsd(summary.finalCashValueUsd);
   const finalJpyText = summary.finalAge === null ? "該当なし" : formatYen(summary.finalCashValueJpy);
   const card = document.createElement("article");
@@ -2527,8 +2905,12 @@ function renderDollarInsuranceSummary() {
     `対象者: ${summary.targetName}`,
     `想定為替レート: 1 USD = ${summary.exchangeRate.toLocaleString("ja-JP", { maximumFractionDigits: 2 })}円`,
     `現在年齢: ${summary.currentAge === null ? "未設定" : `${summary.currentAge}歳`}`,
+    `現在年齢に対応する払込累計額USD（参考）: ${currentPremiumUsdText}`,
+    `現在年齢に対応する払込累計額円換算（総資産外）: ${currentPremiumJpyText}`,
     `現在年齢に対応する解約返戻金USD（参考）: ${currentUsdText}`,
     `現在年齢に対応する解約返戻金円換算（総資産外）: ${currentJpyText}`,
+    `最終年齢の払込累計額USD（参考）: ${summary.finalAge === null ? "該当なし" : `${summary.finalAge}歳 / ${finalPremiumUsdText}`}`,
+    `最終年齢の払込累計額円換算（総資産外）: ${finalPremiumJpyText}`,
     `最終年齢の解約返戻金USD（参考）: ${summary.finalAge === null ? "該当なし" : `${summary.finalAge}歳 / ${finalUsdText}`}`,
     `最終年齢の解約返戻金円換算（総資産外）: ${finalJpyText}`,
     `返戻率: ${formatPercent(summary.returnRate)}`
@@ -2539,7 +2921,7 @@ function renderDollarInsuranceSummary() {
     createTextElement(
       "p",
       "list-memo",
-      "この解約返戻金は総資産・純資産・年末資産見込みには含めていません。総資産外の参考資産として表示しています。"
+      "このドル建終身保険の払込累計額・解約返戻金は、総資産・純資産・年末資産見込みには含めていません。総資産外の参考情報として表示しています。"
     )
   );
 
@@ -2550,7 +2932,7 @@ function renderDollarInsuranceSummary() {
   summaryArea.appendChild(card);
 }
 
-// ドル建生命保険フォームを表示します。
+// ドル建終身保険フォームを表示します。
 function renderDollarInsuranceForm() {
   const formArea = getElement("dollar-insurance-form-area");
 
@@ -2610,17 +2992,17 @@ function renderDollarInsuranceForm() {
   buttonRow.className = "button-row";
   submitButton.type = "submit";
   submitButton.className = "primary-button";
-  submitButton.textContent = "ドル建生命保険を保存";
+  submitButton.textContent = "ドル建終身保険を保存";
   buttonRow.appendChild(submitButton);
 
-  form.appendChild(createTextElement("h3", "list-title", "ドル建生命保険を編集"));
+  form.appendChild(createTextElement("h3", "list-title", "ドル建終身保険を編集"));
   form.appendChild(grid);
   form.appendChild(scheduleField);
   form.appendChild(
     createTextElement(
       "p",
       "list-memo",
-      "CSV風テキストはカンマ区切り・タブ区切りに対応します。この保険は総資産外の参考資産として扱い、総資産・純資産・年末資産見込みには自動反映しません。"
+      "CSV風テキストはカンマ区切り・タブ区切りに対応します。この終身保険は総資産外の参考情報として扱い、総資産・純資産・年末資産見込みには自動反映しません。"
     )
   );
   form.appendChild(buttonRow);
@@ -2628,7 +3010,7 @@ function renderDollarInsuranceForm() {
   applyFormPanelState("dollarInsuranceForm");
 }
 
-// ドル建生命保険フォームの内容を保存します。
+// ドル建終身保険フォームの内容を保存します。
 function handleDollarInsuranceFormSubmit(event) {
   event.preventDefault();
 
@@ -2657,11 +3039,11 @@ function handleDollarInsuranceFormSubmit(event) {
   renderAll();
 
   if (saved) {
-    showMessage(`ドル建生命保険を保存しました（${schedule.length}行）`, "success");
+    showMessage(`ドル建終身保険を保存しました（${schedule.length}行）`, "success");
   }
 }
 
-// ドル建生命保険の簡易バーグラフを表示します。
+// ドル建終身保険の簡易バーグラフを表示します。
 function renderDollarInsuranceChart() {
   const chart = getElement("dollar-insurance-chart");
 
@@ -2711,7 +3093,7 @@ function renderDollarInsuranceChart() {
   chart.appendChild(chartList);
 }
 
-// ドル建生命保険セクション全体を描画します。
+// ドル建終身保険セクション全体を描画します。
 function renderDollarInsuranceSection() {
   ensureDollarInsuranceSection();
   renderDollarInsuranceSummary();
@@ -2794,12 +3176,22 @@ function renderLifePlanTableHeader(table, family) {
   if (isTableColumnVisible("dollarInsurance")) {
     appendTableHeaderCell(
       row,
-      isCompactLifePlanTable() ? "返戻USD" : "ドル建保険 解約返戻金USD（参考）",
+      isCompactLifePlanTable() ? "払込USD" : "ドル建終身 払込累計USD（参考）",
       "dollar-insurance-column dollar-insurance-usd-column"
     );
     appendTableHeaderCell(
       row,
-      isCompactLifePlanTable() ? "返戻円" : "ドル建保険 円換算（総資産外）",
+      isCompactLifePlanTable() ? "払込円" : "ドル建終身 払込累計円（総資産外）",
+      "dollar-insurance-column dollar-insurance-yen-column"
+    );
+    appendTableHeaderCell(
+      row,
+      isCompactLifePlanTable() ? "返戻USD" : "ドル建終身 解約返戻金USD（参考）",
+      "dollar-insurance-column dollar-insurance-usd-column"
+    );
+    appendTableHeaderCell(
+      row,
+      isCompactLifePlanTable() ? "返戻円" : "ドル建終身 解約返戻金円（総資産外）",
       "dollar-insurance-column dollar-insurance-yen-column"
     );
   }
@@ -2891,6 +3283,16 @@ function renderLifePlanTable() {
     }
 
     if (isTableColumnVisible("dollarInsurance")) {
+      appendTableCell(
+        row,
+        result.dollarInsuranceCumulativePremiumUsd > 0 ? formatUsdForTable(result.dollarInsuranceCumulativePremiumUsd) : "-",
+        "number-cell dollar-insurance-table-cell dollar-insurance-column dollar-insurance-usd-column compact-dollar-insurance-cell"
+      );
+      appendTableCell(
+        row,
+        result.dollarInsuranceCumulativePremiumJpy > 0 ? formatYenForTable(result.dollarInsuranceCumulativePremiumJpy) : "-",
+        "number-cell dollar-insurance-table-cell dollar-insurance-column dollar-insurance-yen-column compact-dollar-insurance-cell"
+      );
       appendTableCell(
         row,
         result.dollarInsuranceCashValueUsd > 0 ? formatUsdForTable(result.dollarInsuranceCashValueUsd) : "-",
@@ -3237,7 +3639,7 @@ function renderAll() {
   runRenderStep(renderEventForm, "イベント追加フォーム");
   runRenderStep(renderFinanceSummaries, "資産・収入・支出サマリー");
   runRenderStep(renderFinanceForm, "資産・収入・支出編集フォーム");
-  runRenderStep(renderDollarInsuranceSection, "ドル建生命保険");
+  runRenderStep(renderDollarInsuranceSection, "ドル建終身保険");
   runRenderStep(renderTableDisplaySettings, "ライフプラン表表示設定");
   runRenderStep(renderLifePlanTable, "ライフプラン表");
   runRenderStep(renderAssetChart, "年末資産グラフ");

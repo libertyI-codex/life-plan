@@ -401,6 +401,44 @@ td {
   gap: 14px;
 }
 
+.finance-item-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.finance-item-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.finance-item-list {
+  display: grid;
+  gap: 10px;
+}
+
+.finance-item-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 0.8fr) minmax(160px, 1.2fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #dfe5e7;
+  border-radius: 8px;
+}
+
+.finance-item-delete-button {
+  min-height: 38px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+}
+
+.finance-item-total {
+  font-weight: 700;
+}
+
 .form-field {
   display: grid;
   gap: 6px;
@@ -556,6 +594,19 @@ textarea {
   .dashboard-card p,
   .dashboard-value {
     font-size: 1.35rem;
+  }
+
+  .finance-item-editor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .finance-item-row {
+    grid-template-columns: 1fr;
+  }
+
+  .finance-item-delete-button {
+    width: 100%;
   }
 
   .chart-row {
