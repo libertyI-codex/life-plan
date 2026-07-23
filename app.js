@@ -5,6 +5,17 @@ let messageTimerId = null;
 let editingEventId = null;
 let editingFamilyId = null;
 let lifePlanUiState = null;
+let editingNisaRecordIds = {};
+
+// 2024年以降のNISA制度で使う固定値を1か所にまとめます。
+const NISA_RULES = Object.freeze({
+  startYear: 2024,
+  annualTsumitateLimit: 1200000,
+  annualGrowthLimit: 2400000,
+  annualTotalLimit: 3600000,
+  lifetimeTotalLimit: 18000000,
+  lifetimeGrowthLimit: 12000000
+});
 
 // データを安全に複製します。
 function cloneData(data) {
@@ -57,6 +68,7 @@ function getDefaultUiState() {
       family: false,
       events: false,
       finance: false,
+      nisa: false,
       dollarInsurance: false,
       chart: false,
       table: false,
@@ -374,6 +386,111 @@ function syncLegacyFinanceFields(data) {
   return data;
 }
 
+// NISAの金額入力を0円以上の整数へそろえます。
+function normalizeNisaAmount(value) {
+  const amount = Math.trunc(toNumber(value));
+  return amount >= 0 ? amount : 0;
+}
+
+// 家族設定からNISA管理枠の初期対象者を探します。
+function findDefaultNisaFamilyMemberId(family, memberIndex) {
+  const members = Array.isArray(family) ? family : [];
+  const relationshipPattern = memberIndex === 0
+    ? /^本人$/
+    : /^(配偶者|妻|夫)$/;
+  const matchedMember = members.find(function (member) {
+    return relationshipPattern.test(String(member && member.relationship || "").trim());
+  });
+
+  return matchedMember && matchedMember.id ? matchedMember.id : "";
+}
+
+// NISA年次記録を保存可能な形へ整えます。
+function normalizeNisaRecord(record, memberIndex, recordIndex) {
+  const source = record && typeof record === "object" ? record : {};
+  const year = Math.trunc(toNumber(source.year));
+
+  return {
+    id: hasValue(source.id)
+      ? String(source.id)
+      : `nisa-record-${memberIndex + 1}-${year || recordIndex + 1}`,
+    year: year,
+    tsumitatePurchaseAmount: normalizeNisaAmount(source.tsumitatePurchaseAmount),
+    growthPurchaseAmount: normalizeNisaAmount(source.growthPurchaseAmount),
+    tsumitateSoldBookValue: normalizeNisaAmount(source.tsumitateSoldBookValue),
+    growthSoldBookValue: normalizeNisaAmount(source.growthSoldBookValue),
+    memo: hasValue(source.memo) ? String(source.memo) : ""
+  };
+}
+
+// 同一年の重複を除き、NISA年次記録を年順にそろえます。
+function normalizeNisaRecords(records, memberIndex) {
+  const normalizedRecords = [];
+  const usedYears = new Set();
+
+  (Array.isArray(records) ? records : [])
+    .map(function (record, recordIndex) {
+      return normalizeNisaRecord(record, memberIndex, recordIndex);
+    })
+    .filter(function (record) {
+      return record.year >= NISA_RULES.startYear;
+    })
+    .sort(function (firstRecord, secondRecord) {
+      return firstRecord.year - secondRecord.year;
+    })
+    .forEach(function (record) {
+      if (!usedYears.has(record.year)) {
+        usedYears.add(record.year);
+        normalizedRecords.push(record);
+      }
+    });
+
+  return normalizedRecords;
+}
+
+// 1人分のNISA管理データを補完します。
+function normalizeNisaMember(member, memberIndex, family) {
+  const source = member && typeof member === "object" ? member : {};
+  const fallbackName = memberIndex === 0 ? "本人" : "配偶者";
+  const defaultFamilyMemberId = findDefaultNisaFamilyMemberId(family, memberIndex);
+
+  return {
+    id: hasValue(source.id) ? String(source.id) : `nisa-member-${memberIndex + 1}`,
+    familyMemberId: hasValue(source.familyMemberId)
+      ? String(source.familyMemberId)
+      : defaultFamilyMemberId,
+    fallbackName: hasValue(source.fallbackName) ? String(source.fallbackName) : fallbackName,
+    records: normalizeNisaRecords(source.records, memberIndex)
+  };
+}
+
+// 旧データへ本人・配偶者の2人分のNISA管理構造を安全に追加します。
+function ensureNisaManagementShape(data) {
+  const family = Array.isArray(data && data.family) ? data.family : [];
+  const source = data && data.nisaManagement && typeof data.nisaManagement === "object"
+    ? data.nisaManagement
+    : {};
+  const sourceMembers = Array.isArray(source.members) ? source.members : [];
+  const members = [0, 1].map(function (memberIndex) {
+    return normalizeNisaMember(sourceMembers[memberIndex], memberIndex, family);
+  });
+
+  // 初回自動選択でも同じ家族を2枠へ割り当てません。
+  if (
+    members[0].familyMemberId &&
+    members[0].familyMemberId === members[1].familyMemberId
+  ) {
+    members[1].familyMemberId = "";
+  }
+
+  data.nisaManagement = {
+    startYear: NISA_RULES.startYear,
+    members: members
+  };
+
+  return data;
+}
+
 // 古い保存データに足りない項目を補完します。
 function ensureDataShape(data) {
   const shapedData = data && typeof data === "object" && !Array.isArray(data) ? data : {};
@@ -510,6 +627,7 @@ function ensureDataShape(data) {
     shapedData.dollarInsurance.schedule = parseDollarInsuranceScheduleText(shapedData.dollarInsurance.scheduleText);
   }
 
+  ensureNisaManagementShape(shapedData);
   syncLegacyFinanceFields(shapedData);
   return shapedData;
 }
@@ -553,6 +671,7 @@ function getCollapsibleSectionConfigs() {
     { key: "family", sectionId: "family-section", headingId: "family-heading" },
     { key: "events", sectionId: "event-section", headingId: "event-heading" },
     { key: "finance", sectionId: "finance-section", headingId: "finance-heading" },
+    { key: "nisa", sectionId: "nisa-section", headingId: "nisa-heading" },
     { key: "dollarInsurance", sectionId: "dollar-insurance-section", headingId: "dollar-insurance-heading" },
     { key: "chart", sectionId: "asset-chart-section", headingId: "asset-chart-heading" },
     { key: "table", sectionId: "life-plan-section", headingId: "life-plan-heading" },
@@ -827,6 +946,7 @@ function resetData() {
   lifePlanData = ensureDataShape(getInitialDataCopy());
   editingEventId = null;
   editingFamilyId = null;
+  editingNisaRecordIds = {};
   lifePlanResults = calculateLifePlan(lifePlanData);
 
   try {
@@ -1169,6 +1289,200 @@ function calculateAnnualIncome(data, year) {
 // 通常の年間支出を計算します。
 function calculateAnnualRegularExpenses(data) {
   return calculateMonthlyExpenseTotal(data) * 12 + calculateAnnualExpenseItemTotal(data);
+}
+
+// 1人分のNISA枠を年順に計算します。DOMには依存しません。
+function calculateNisaMemberSchedule(memberRecords, rules) {
+  const appliedRules = rules || NISA_RULES;
+  const records = normalizeNisaRecords(memberRecords, 0);
+  let tsumitateBookValue = 0;
+  let growthBookValue = 0;
+
+  return records.map(function (record) {
+    const startTsumitateBookValue = tsumitateBookValue;
+    const startGrowthBookValue = growthBookValue;
+    const startTotalBookValue = startTsumitateBookValue + startGrowthBookValue;
+    const purchaseTotal =
+      record.tsumitatePurchaseAmount +
+      record.growthPurchaseAmount;
+    const soldBookValueTotal =
+      record.tsumitateSoldBookValue +
+      record.growthSoldBookValue;
+    const endTsumitateBookValue =
+      startTsumitateBookValue +
+      record.tsumitatePurchaseAmount -
+      record.tsumitateSoldBookValue;
+    const endGrowthBookValue =
+      startGrowthBookValue +
+      record.growthPurchaseAmount -
+      record.growthSoldBookValue;
+    const endTotalBookValue = endTsumitateBookValue + endGrowthBookValue;
+
+    tsumitateBookValue = endTsumitateBookValue;
+    growthBookValue = endGrowthBookValue;
+
+    return {
+      id: record.id,
+      year: record.year,
+      memo: record.memo,
+      tsumitatePurchaseAmount: record.tsumitatePurchaseAmount,
+      growthPurchaseAmount: record.growthPurchaseAmount,
+      purchaseTotal: purchaseTotal,
+      tsumitateSoldBookValue: record.tsumitateSoldBookValue,
+      growthSoldBookValue: record.growthSoldBookValue,
+      soldBookValueTotal: soldBookValueTotal,
+      startTsumitateBookValue: startTsumitateBookValue,
+      startGrowthBookValue: startGrowthBookValue,
+      startTotalBookValue: startTotalBookValue,
+      annualTsumitateRemaining: appliedRules.annualTsumitateLimit - record.tsumitatePurchaseAmount,
+      annualGrowthRemaining: appliedRules.annualGrowthLimit - record.growthPurchaseAmount,
+      annualTotalRemaining: appliedRules.annualTotalLimit - purchaseTotal,
+      lifetimeTotalRemainingAtStart: appliedRules.lifetimeTotalLimit - startTotalBookValue,
+      lifetimeGrowthRemainingAtStart: appliedRules.lifetimeGrowthLimit - startGrowthBookValue,
+      endTsumitateBookValue: endTsumitateBookValue,
+      endGrowthBookValue: endGrowthBookValue,
+      endTotalBookValue: endTotalBookValue,
+      nextYearRestorationAmount: soldBookValueTotal,
+      nextYearLifetimeTotalRemaining: appliedRules.lifetimeTotalLimit - endTotalBookValue,
+      nextYearLifetimeGrowthRemaining: appliedRules.lifetimeGrowthLimit - endGrowthBookValue
+    };
+  });
+}
+
+// NISA年次記録全体を順に検証し、過去年の編集も後続年へ反映します。
+function validateNisaMemberRecords(memberRecords, rules) {
+  const appliedRules = rules || NISA_RULES;
+  const records = Array.isArray(memberRecords) ? memberRecords.slice() : [];
+  const usedYears = new Set();
+  let startTsumitateBookValue = 0;
+  let startGrowthBookValue = 0;
+
+  records.sort(function (firstRecord, secondRecord) {
+    return toNumber(firstRecord && firstRecord.year) - toNumber(secondRecord && secondRecord.year);
+  });
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] || {};
+    const year = toNumber(record.year);
+    const amounts = [
+      toNumber(record.tsumitatePurchaseAmount),
+      toNumber(record.growthPurchaseAmount),
+      toNumber(record.tsumitateSoldBookValue),
+      toNumber(record.growthSoldBookValue)
+    ];
+
+    if (!Number.isInteger(year) || year < appliedRules.startYear) {
+      return {
+        isValid: false,
+        message: `年は${appliedRules.startYear}年以降の整数で入力してください`
+      };
+    }
+
+    if (usedYears.has(year)) {
+      return {
+        isValid: false,
+        message: `${year}年の記録はすでにあります`
+      };
+    }
+    usedYears.add(year);
+
+    if (amounts.some(function (amount) {
+      return !Number.isInteger(amount) || amount < 0;
+    })) {
+      return {
+        isValid: false,
+        message: `${year}年の金額は0円以上の整数で入力してください`
+      };
+    }
+
+    const tsumitatePurchaseAmount = amounts[0];
+    const growthPurchaseAmount = amounts[1];
+    const tsumitateSoldBookValue = amounts[2];
+    const growthSoldBookValue = amounts[3];
+    const purchaseTotal = tsumitatePurchaseAmount + growthPurchaseAmount;
+    const startTotalBookValue = startTsumitateBookValue + startGrowthBookValue;
+    const lifetimeTotalRemainingAtStart =
+      appliedRules.lifetimeTotalLimit - startTotalBookValue;
+    const lifetimeGrowthRemainingAtStart =
+      appliedRules.lifetimeGrowthLimit - startGrowthBookValue;
+
+    if (tsumitatePurchaseAmount > appliedRules.annualTsumitateLimit) {
+      return {
+        isValid: false,
+        message: `${year}年のつみたて買付額は年間120万円以下にしてください`
+      };
+    }
+
+    if (growthPurchaseAmount > appliedRules.annualGrowthLimit) {
+      return {
+        isValid: false,
+        message: `${year}年の成長買付額は年間240万円以下にしてください`
+      };
+    }
+
+    if (purchaseTotal > appliedRules.annualTotalLimit) {
+      return {
+        isValid: false,
+        message: `${year}年の買付合計は年間360万円以下にしてください`
+      };
+    }
+
+    if (purchaseTotal > lifetimeTotalRemainingAtStart) {
+      return {
+        isValid: false,
+        message: `${year}年の買付合計が年初の生涯総枠残りを超えています`
+      };
+    }
+
+    if (growthPurchaseAmount > lifetimeGrowthRemainingAtStart) {
+      return {
+        isValid: false,
+        message: `${year}年の成長買付額が年初の成長投資枠残りを超えています`
+      };
+    }
+
+    if (
+      tsumitateSoldBookValue >
+      startTsumitateBookValue + tsumitatePurchaseAmount
+    ) {
+      return {
+        isValid: false,
+        message: `${year}年のつみたて売却簿価が保有簿価を超えています`
+      };
+    }
+
+    if (
+      growthSoldBookValue >
+      startGrowthBookValue + growthPurchaseAmount
+    ) {
+      return {
+        isValid: false,
+        message: `${year}年の成長売却簿価が保有簿価を超えています`
+      };
+    }
+
+    startTsumitateBookValue =
+      startTsumitateBookValue +
+      tsumitatePurchaseAmount -
+      tsumitateSoldBookValue;
+    startGrowthBookValue =
+      startGrowthBookValue +
+      growthPurchaseAmount -
+      growthSoldBookValue;
+
+    if (startTsumitateBookValue < 0 || startGrowthBookValue < 0) {
+      return {
+        isValid: false,
+        message: `${year}年末のNISA簿価残高がマイナスになります`
+      };
+    }
+  }
+
+  return {
+    isValid: true,
+    message: "",
+    schedule: calculateNisaMemberSchedule(records, appliedRules)
+  };
 }
 
 // 住宅ローン残高の年ごとの概算推移を計算します。
@@ -2803,6 +3117,573 @@ function handleFinanceFormSubmit(event) {
   }
 }
 
+// NISA枠管理セクションを資産設定とドル建終身保険の間に用意します。
+function ensureNisaSection() {
+  let section = getElement("nisa-section");
+
+  if (section) {
+    return section;
+  }
+
+  section = document.createElement("section");
+  section.id = "nisa-section";
+  section.setAttribute("aria-labelledby", "nisa-heading");
+
+  const heading = createTextElement("h2", "", "NISA枠管理");
+  const contentArea = document.createElement("div");
+
+  heading.id = "nisa-heading";
+  contentArea.id = "nisa-content-area";
+  section.appendChild(heading);
+  section.appendChild(contentArea);
+
+  const dollarInsuranceSection = getElement("dollar-insurance-section");
+  const chartSection = getElement("asset-chart-section");
+  const financeSection = getElement("finance-section");
+  const main = document.querySelector ? document.querySelector("main") : document.body;
+
+  if (dollarInsuranceSection && dollarInsuranceSection.parentNode) {
+    dollarInsuranceSection.parentNode.insertBefore(section, dollarInsuranceSection);
+  } else if (chartSection && chartSection.parentNode) {
+    chartSection.parentNode.insertBefore(section, chartSection);
+  } else if (financeSection && financeSection.parentNode) {
+    financeSection.parentNode.insertBefore(section, financeSection.nextSibling);
+  } else if (main) {
+    main.appendChild(section);
+  }
+
+  return section;
+}
+
+// NISA管理枠に紐づく家族名を返します。
+function getNisaMemberDisplayName(member) {
+  const family = Array.isArray(lifePlanData && lifePlanData.family)
+    ? lifePlanData.family
+    : [];
+  const familyMember = family.find(function (candidate) {
+    return candidate.id === member.familyMemberId;
+  });
+
+  return familyMember ? familyMember.name : member.fallbackName || "未選択";
+}
+
+// NISA管理枠IDから対象データを取得します。
+function getNisaMemberById(memberId) {
+  const members =
+    lifePlanData &&
+    lifePlanData.nisaManagement &&
+    Array.isArray(lifePlanData.nisaManagement.members)
+      ? lifePlanData.nisaManagement.members
+      : [];
+
+  return members.find(function (member) {
+    return member.id === memberId;
+  }) || null;
+}
+
+// NISAサマリー用に現在年または最新年の計算結果を選びます。
+function getNisaSummaryRow(member) {
+  const schedule = calculateNisaMemberSchedule(member.records, NISA_RULES);
+  const currentYear = Math.max(NISA_RULES.startYear, new Date().getFullYear());
+  const currentYearRow = schedule.find(function (row) {
+    return row.year === currentYear;
+  });
+
+  if (currentYearRow) {
+    return currentYearRow;
+  }
+
+  if (schedule.length > 0) {
+    return schedule[schedule.length - 1];
+  }
+
+  return calculateNisaMemberSchedule([
+    {
+      id: "nisa-summary-empty",
+      year: currentYear,
+      tsumitatePurchaseAmount: 0,
+      growthPurchaseAmount: 0,
+      tsumitateSoldBookValue: 0,
+      growthSoldBookValue: 0,
+      memo: ""
+    }
+  ], NISA_RULES)[0];
+}
+
+// NISA制度の固定値と注意点を表示します。
+function renderNisaRulesNotice(container) {
+  const notice = document.createElement("div");
+  const list = document.createElement("ul");
+  const notes = [
+    "2024年以降のNISAを対象とします。",
+    "年間投資枠は、つみたて120万円・成長240万円、合計360万円です。",
+    "生涯総枠は1,800万円、うち成長投資枠は1,200万円です。",
+    "売却した取得簿価分は翌年以降に再利用できますが、売却した年の年間投資枠は戻りません。",
+    "売却簿価には売却代金ではなく、NISAで取得したときの金額を入力してください。",
+    "本機能は枠管理の参考値です。最終的には証券会社の表示を優先してください。",
+    "NISAの買付額や簿価残高は、二重計上防止のため総資産へ自動加算しません。"
+  ];
+
+  notice.className = "nisa-rules-note";
+  notes.forEach(function (note) {
+    const item = document.createElement("li");
+    item.textContent = note;
+    list.appendChild(item);
+  });
+  notice.appendChild(list);
+  container.appendChild(notice);
+}
+
+// 人物別NISAサマリーの1項目を追加します。
+function appendNisaSummaryItem(container, label, value, groupClass) {
+  const item = document.createElement("div");
+  const labelElement = createTextElement("span", "nisa-summary-label", label);
+  const valueElement = createTextElement("strong", "nisa-summary-value", value);
+
+  item.className = `nisa-summary-item ${groupClass || ""}`.trim();
+  item.appendChild(labelElement);
+  item.appendChild(valueElement);
+  container.appendChild(item);
+}
+
+// 1人分のNISA対象者選択欄を表示します。
+function renderNisaMemberSelector(container, member, memberIndex) {
+  const family = Array.isArray(lifePlanData.family) ? lifePlanData.family : [];
+  const options = [{ value: "", label: "未選択" }].concat(
+    family.map(function (familyMember) {
+      return {
+        value: familyMember.id,
+        label: `${familyMember.name}（${familyMember.relationship || "続柄未設定"}）`
+      };
+    })
+  );
+  const row = document.createElement("div");
+  const selectField = createSelectField(
+    `nisa-target-${member.id}`,
+    `${memberIndex + 1}人目の対象者`,
+    options,
+    member.familyMemberId
+  );
+  const saveButton = document.createElement("button");
+
+  row.className = "nisa-member-selector";
+  saveButton.type = "button";
+  saveButton.className = "secondary-button small-button";
+  saveButton.textContent = "対象者を保存";
+  saveButton.addEventListener("click", function () {
+    handleNisaMemberSelection(member.id);
+  });
+
+  row.appendChild(selectField);
+  row.appendChild(saveButton);
+  container.appendChild(row);
+}
+
+// NISA対象者を保存し、2枠への同一家族登録を防ぎます。
+function handleNisaMemberSelection(memberId) {
+  const member = getNisaMemberById(memberId);
+  const selectedFamilyMemberId = getInputValue(`nisa-target-${memberId}`);
+
+  if (!member) {
+    showMessage("NISA管理対象者が見つかりません", "error");
+    return;
+  }
+
+  const duplicateMember = lifePlanData.nisaManagement.members.find(function (candidate) {
+    return (
+      candidate.id !== memberId &&
+      selectedFamilyMemberId &&
+      candidate.familyMemberId === selectedFamilyMemberId
+    );
+  });
+
+  if (duplicateMember) {
+    showMessage("同じ家族を2つのNISA管理枠に設定することはできません", "error");
+    return;
+  }
+
+  member.familyMemberId = selectedFamilyMemberId;
+  const saved = saveData();
+  renderAll();
+
+  if (saved) {
+    showMessage("NISA管理対象者を更新しました", "success");
+  }
+}
+
+// 1人分の最新NISAサマリーを表示します。
+function renderNisaMemberSummary(container, member) {
+  const summaryRow = getNisaSummaryRow(member);
+  const summary = document.createElement("div");
+  const heading = createTextElement(
+    "h4",
+    "nisa-summary-heading",
+    `${summaryRow.year}年の枠状況`
+  );
+
+  summary.className = "nisa-summary";
+  summary.appendChild(heading);
+
+  const summaryGrid = document.createElement("div");
+  summaryGrid.className = "nisa-summary-grid";
+
+  appendNisaSummaryItem(summaryGrid, "対象者", getNisaMemberDisplayName(member), "nisa-summary-person");
+  appendNisaSummaryItem(summaryGrid, "当年つみたて投資額", formatYen(summaryRow.tsumitatePurchaseAmount), "nisa-summary-annual");
+  appendNisaSummaryItem(summaryGrid, "当年つみたて年間残り", formatYen(summaryRow.annualTsumitateRemaining), "nisa-summary-annual");
+  appendNisaSummaryItem(summaryGrid, "当年成長投資額", formatYen(summaryRow.growthPurchaseAmount), "nisa-summary-annual");
+  appendNisaSummaryItem(summaryGrid, "当年成長年間残り", formatYen(summaryRow.annualGrowthRemaining), "nisa-summary-annual");
+  appendNisaSummaryItem(summaryGrid, "当年買付合計", formatYen(summaryRow.purchaseTotal), "nisa-summary-annual");
+  appendNisaSummaryItem(summaryGrid, "当年年間残り合計", formatYen(summaryRow.annualTotalRemaining), "nisa-summary-annual");
+  appendNisaSummaryItem(summaryGrid, "年末つみたて簿価", formatYen(summaryRow.endTsumitateBookValue), "nisa-summary-book");
+  appendNisaSummaryItem(summaryGrid, "年末成長簿価", formatYen(summaryRow.endGrowthBookValue), "nisa-summary-book");
+  appendNisaSummaryItem(summaryGrid, "年末総簿価", formatYen(summaryRow.endTotalBookValue), "nisa-summary-book");
+  appendNisaSummaryItem(summaryGrid, "当年売却簿価合計", formatYen(summaryRow.soldBookValueTotal), "nisa-summary-restoration");
+  appendNisaSummaryItem(summaryGrid, "翌年復活予定額", formatYen(summaryRow.nextYearRestorationAmount), "nisa-summary-restoration");
+  appendNisaSummaryItem(summaryGrid, "翌年利用可能な生涯総枠", formatYen(summaryRow.nextYearLifetimeTotalRemaining), "nisa-summary-lifetime");
+  appendNisaSummaryItem(summaryGrid, "翌年利用可能な成長生涯枠", formatYen(summaryRow.nextYearLifetimeGrowthRemaining), "nisa-summary-lifetime");
+
+  summary.appendChild(summaryGrid);
+  container.appendChild(summary);
+}
+
+// NISA年次記録の新規入力で使う初期年を返します。
+function getDefaultNisaRecordYear(member) {
+  const usedYears = new Set(
+    (Array.isArray(member.records) ? member.records : []).map(function (record) {
+      return toNumber(record.year);
+    })
+  );
+  let year = Math.max(NISA_RULES.startYear, new Date().getFullYear());
+
+  while (usedYears.has(year)) {
+    year += 1;
+  }
+
+  return year;
+}
+
+// 1人分のNISA年次記録フォームを表示します。
+function renderNisaRecordForm(container, member) {
+  const editingRecordId = editingNisaRecordIds[member.id] || null;
+  const editingRecord = editingRecordId
+    ? member.records.find(function (record) {
+        return record.id === editingRecordId;
+      })
+    : null;
+  const record = editingRecord || {
+    year: getDefaultNisaRecordYear(member),
+    tsumitatePurchaseAmount: 0,
+    growthPurchaseAmount: 0,
+    tsumitateSoldBookValue: 0,
+    growthSoldBookValue: 0,
+    memo: ""
+  };
+  const form = document.createElement("form");
+  const grid = document.createElement("div");
+  const buttonRow = document.createElement("div");
+  const submitButton = document.createElement("button");
+  const cancelButton = document.createElement("button");
+  const fieldPrefix = `nisa-${member.id}`;
+
+  form.className = "nisa-record-form";
+  form.dataset.memberId = member.id;
+  form.addEventListener("submit", function (event) {
+    handleNisaRecordSubmit(event, member.id);
+  });
+  form.appendChild(createTextElement(
+    "h4",
+    "list-title",
+    editingRecord ? "年次記録を編集" : "年次記録を追加"
+  ));
+
+  grid.className = "form-grid nisa-record-form-grid";
+  [
+    createNumberField(`${fieldPrefix}-year`, "年", record.year, "1", NISA_RULES.startYear, "numeric"),
+    createNumberField(`${fieldPrefix}-tsumitate-purchase`, "つみたて買付額", record.tsumitatePurchaseAmount, "1", "0", "numeric"),
+    createNumberField(`${fieldPrefix}-growth-purchase`, "成長買付額", record.growthPurchaseAmount, "1", "0", "numeric"),
+    createNumberField(`${fieldPrefix}-tsumitate-sold`, "つみたて売却簿価", record.tsumitateSoldBookValue, "1", "0", "numeric"),
+    createNumberField(`${fieldPrefix}-growth-sold`, "成長売却簿価", record.growthSoldBookValue, "1", "0", "numeric"),
+    createTextareaField(`${fieldPrefix}-memo`, "メモ", record.memo)
+  ].forEach(function (field) {
+    grid.appendChild(field);
+  });
+
+  const yearInput = getElement(`${fieldPrefix}-year`) || grid.querySelector(`#${fieldPrefix}-year`);
+  if (yearInput) {
+    yearInput.required = true;
+  }
+
+  form.appendChild(grid);
+  form.appendChild(createTextElement(
+    "p",
+    "list-memo nisa-sold-note",
+    "売却金額ではなく、その商品をNISAで取得したときの金額を入力してください。"
+  ));
+
+  buttonRow.className = "button-row";
+  submitButton.type = "submit";
+  submitButton.className = "primary-button small-button";
+  submitButton.textContent = editingRecord ? "年次記録を更新" : "年次記録を追加";
+  buttonRow.appendChild(submitButton);
+
+  if (editingRecord) {
+    cancelButton.type = "button";
+    cancelButton.className = "secondary-button small-button";
+    cancelButton.textContent = "編集をキャンセル";
+    cancelButton.addEventListener("click", function () {
+      cancelEditNisaRecord(member.id);
+    });
+    buttonRow.appendChild(cancelButton);
+  }
+
+  form.appendChild(buttonRow);
+  container.appendChild(form);
+}
+
+// NISA年次記録の入力値を取得します。
+function getNisaRecordInput(memberId, recordId) {
+  const fieldPrefix = `nisa-${memberId}`;
+
+  return {
+    id: recordId || createId("nisa-record"),
+    year: getInputNumber(`${fieldPrefix}-year`),
+    tsumitatePurchaseAmount: getInputNumber(`${fieldPrefix}-tsumitate-purchase`),
+    growthPurchaseAmount: getInputNumber(`${fieldPrefix}-growth-purchase`),
+    tsumitateSoldBookValue: getInputNumber(`${fieldPrefix}-tsumitate-sold`),
+    growthSoldBookValue: getInputNumber(`${fieldPrefix}-growth-sold`),
+    memo: getInputValue(`${fieldPrefix}-memo`)
+  };
+}
+
+// NISA年次記録を追加または更新します。
+function handleNisaRecordSubmit(event, memberId) {
+  event.preventDefault();
+
+  const member = getNisaMemberById(memberId);
+  const editingRecordId = editingNisaRecordIds[memberId] || null;
+
+  if (!member) {
+    showMessage("NISA管理対象者が見つかりません", "error");
+    return;
+  }
+
+  const recordValues = getNisaRecordInput(memberId, editingRecordId);
+  const candidateRecords = member.records
+    .filter(function (record) {
+      return record.id !== editingRecordId;
+    })
+    .concat(recordValues);
+  const validation = validateNisaMemberRecords(candidateRecords, NISA_RULES);
+
+  if (!validation.isValid) {
+    showMessage(validation.message, "error");
+    return;
+  }
+
+  member.records = normalizeNisaRecords(candidateRecords, 0);
+  delete editingNisaRecordIds[memberId];
+
+  const saved = saveData();
+  renderAll();
+
+  if (saved) {
+    showMessage(
+      editingRecordId ? "NISA年次記録を更新しました" : "NISA年次記録を追加しました",
+      "success"
+    );
+  }
+}
+
+// NISA年次記録の編集を開始します。
+function startEditNisaRecord(memberId, recordId) {
+  const member = getNisaMemberById(memberId);
+  const record = member && member.records.find(function (candidate) {
+    return candidate.id === recordId;
+  });
+
+  if (!record) {
+    showMessage("編集するNISA年次記録が見つかりません", "error");
+    return;
+  }
+
+  editingNisaRecordIds[memberId] = recordId;
+  renderNisaSection();
+
+  const form = getElement(`nisa-member-card-${memberId}`);
+  if (form && typeof form.scrollIntoView === "function") {
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  showMessage(`${record.year}年のNISA記録を編集できます`, "success");
+}
+
+// NISA年次記録の編集をキャンセルします。
+function cancelEditNisaRecord(memberId) {
+  delete editingNisaRecordIds[memberId];
+  renderNisaSection();
+  showMessage("NISA年次記録の編集をキャンセルしました", "success");
+}
+
+// NISA年次記録を削除し、以後の枠を再計算します。
+function handleDeleteNisaRecord(memberId, recordId) {
+  const member = getNisaMemberById(memberId);
+  const record = member && member.records.find(function (candidate) {
+    return candidate.id === recordId;
+  });
+
+  if (!record) {
+    showMessage("削除するNISA年次記録が見つかりません", "error");
+    return;
+  }
+
+  const shouldDelete = confirm(
+    `${record.year}年のNISA記録を削除しますか？この年以降の残り枠計算が変わります。`
+  );
+
+  if (!shouldDelete) {
+    return;
+  }
+
+  member.records = member.records.filter(function (candidate) {
+    return candidate.id !== recordId;
+  });
+
+  if (editingNisaRecordIds[memberId] === recordId) {
+    delete editingNisaRecordIds[memberId];
+  }
+
+  const saved = saveData();
+  renderAll();
+
+  if (saved) {
+    showMessage("NISA年次記録を削除しました", "success");
+  }
+}
+
+// 1人分のNISA年次一覧を表示します。
+function renderNisaRecords(container, member) {
+  const schedule = calculateNisaMemberSchedule(member.records, NISA_RULES);
+  const heading = createTextElement("h4", "list-title", "年次記録");
+  const scroll = document.createElement("div");
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const body = document.createElement("tbody");
+  const headers = [
+    "年",
+    "つみたて買付",
+    "成長買付",
+    "買付合計",
+    "つみたて売却簿価",
+    "成長売却簿価",
+    "年末総簿価",
+    "当年年間残り",
+    "翌年総枠残り",
+    "翌年成長枠残り",
+    "メモ",
+    "操作"
+  ];
+
+  container.appendChild(heading);
+
+  if (schedule.length === 0) {
+    container.appendChild(createTextElement(
+      "p",
+      "list-meta",
+      "年次記録はまだありません。2024年以降の記録を追加してください。"
+    ));
+    renderNisaRecordForm(container, member);
+    return;
+  }
+
+  scroll.className = "table-scroll nisa-table-scroll";
+  table.className = "nisa-record-table";
+
+  headers.forEach(function (header) {
+    appendTableHeaderCell(headRow, header);
+  });
+  head.appendChild(headRow);
+
+  schedule.forEach(function (row) {
+    const tableRow = document.createElement("tr");
+    const actionCell = document.createElement("td");
+    const actionRow = document.createElement("div");
+    const editButton = document.createElement("button");
+    const deleteButton = document.createElement("button");
+
+    appendTableCell(tableRow, String(row.year));
+    appendTableCell(tableRow, formatYen(row.tsumitatePurchaseAmount), "number-cell");
+    appendTableCell(tableRow, formatYen(row.growthPurchaseAmount), "number-cell");
+    appendTableCell(tableRow, formatYen(row.purchaseTotal), "number-cell");
+    appendTableCell(tableRow, formatYen(row.tsumitateSoldBookValue), "number-cell");
+    appendTableCell(tableRow, formatYen(row.growthSoldBookValue), "number-cell");
+    appendTableCell(tableRow, formatYen(row.endTotalBookValue), "number-cell");
+    appendTableCell(tableRow, formatYen(row.annualTotalRemaining), "number-cell");
+    appendTableCell(tableRow, formatYen(row.nextYearLifetimeTotalRemaining), "number-cell");
+    appendTableCell(tableRow, formatYen(row.nextYearLifetimeGrowthRemaining), "number-cell");
+    appendTableCell(tableRow, row.memo || "-");
+
+    actionRow.className = "nisa-record-actions";
+    editButton.type = "button";
+    editButton.className = "secondary-button nisa-action-button";
+    editButton.textContent = "編集";
+    editButton.addEventListener("click", function () {
+      startEditNisaRecord(member.id, row.id);
+    });
+
+    deleteButton.type = "button";
+    deleteButton.className = "danger-button nisa-action-button";
+    deleteButton.textContent = "削除";
+    deleteButton.addEventListener("click", function () {
+      handleDeleteNisaRecord(member.id, row.id);
+    });
+
+    actionRow.appendChild(editButton);
+    actionRow.appendChild(deleteButton);
+    actionCell.appendChild(actionRow);
+    tableRow.appendChild(actionCell);
+    body.appendChild(tableRow);
+  });
+
+  table.appendChild(head);
+  table.appendChild(body);
+  scroll.appendChild(table);
+  container.appendChild(scroll);
+  renderNisaRecordForm(container, member);
+}
+
+// 本人・配偶者の2人分を分けてNISA枠管理画面へ表示します。
+function renderNisaSection() {
+  const section = ensureNisaSection();
+  const contentArea = getElement("nisa-content-area");
+
+  if (!section || !contentArea || !lifePlanData) {
+    return;
+  }
+
+  ensureNisaManagementShape(lifePlanData);
+  clearElement(contentArea);
+  renderNisaRulesNotice(contentArea);
+
+  const members = lifePlanData.nisaManagement.members;
+  members.forEach(function (member, memberIndex) {
+    const card = document.createElement("article");
+    const title = createTextElement(
+      "h3",
+      "nisa-member-title",
+      `${memberIndex + 1}人目: ${getNisaMemberDisplayName(member)}`
+    );
+
+    card.id = `nisa-member-card-${member.id}`;
+    card.className = "nisa-member-card";
+    card.appendChild(title);
+    renderNisaMemberSelector(card, member, memberIndex);
+    renderNisaMemberSummary(card, member);
+    renderNisaRecords(card, member);
+    contentArea.appendChild(card);
+  });
+}
+
 // ドル建終身保険セクションを画面に用意します。
 function ensureDollarInsuranceSection() {
   let section = getElement("dollar-insurance-section");
@@ -3596,6 +4477,7 @@ function importJson(file) {
         const saved = saveData();
         editingFamilyId = null;
         editingEventId = null;
+        editingNisaRecordIds = {};
         renderAll();
 
         if (saved) {
@@ -3639,6 +4521,7 @@ function renderAll() {
   runRenderStep(renderEventForm, "イベント追加フォーム");
   runRenderStep(renderFinanceSummaries, "資産・収入・支出サマリー");
   runRenderStep(renderFinanceForm, "資産・収入・支出編集フォーム");
+  runRenderStep(renderNisaSection, "NISA枠管理");
   runRenderStep(renderDollarInsuranceSection, "ドル建終身保険");
   runRenderStep(renderTableDisplaySettings, "ライフプラン表表示設定");
   runRenderStep(renderLifePlanTable, "ライフプラン表");

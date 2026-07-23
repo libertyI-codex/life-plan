@@ -439,6 +439,141 @@ td {
   font-weight: 700;
 }
 
+.nisa-rules-note {
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  color: #3f4f58;
+  background: #f5f8f7;
+  border-left: 4px solid #4f8179;
+}
+
+.nisa-rules-note ul {
+  margin: 0;
+  padding-left: 1.3rem;
+}
+
+.nisa-rules-note li + li {
+  margin-top: 4px;
+}
+
+.nisa-member-card {
+  margin: 0 0 20px;
+  padding: 18px;
+  background: #ffffff;
+  border: 1px solid #d9e3e1;
+  border-radius: 8px;
+}
+
+.nisa-member-card:last-child {
+  margin-bottom: 0;
+}
+
+.nisa-member-title {
+  margin: 0 0 14px;
+  color: #1f4f49;
+  font-size: 1.08rem;
+}
+
+.nisa-member-selector {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+
+.nisa-summary {
+  margin: 0 0 20px;
+}
+
+.nisa-summary-heading {
+  margin: 0 0 10px;
+  font-size: 0.98rem;
+}
+
+.nisa-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  border-top: 1px solid #dfe5e7;
+}
+
+.nisa-summary-item {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #dfe5e7;
+}
+
+.nisa-summary-item:nth-child(odd) {
+  border-right: 1px solid #dfe5e7;
+}
+
+.nisa-summary-label {
+  color: #58666f;
+  font-size: 0.82rem;
+}
+
+.nisa-summary-value {
+  color: #24303a;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.nisa-summary-restoration .nisa-summary-value {
+  color: #8a5c11;
+}
+
+.nisa-summary-lifetime .nisa-summary-value {
+  color: #1f6f5f;
+}
+
+.nisa-table-scroll {
+  margin: 10px 0 16px;
+}
+
+.nisa-record-table {
+  min-width: 1480px;
+  font-size: 0.84rem;
+}
+
+.nisa-record-table th,
+.nisa-record-table td {
+  padding: 8px 9px;
+}
+
+.nisa-record-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.nisa-action-button {
+  min-height: 34px;
+  padding: 6px 9px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.nisa-record-form {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #dfe5e7;
+}
+
+.nisa-record-form-grid textarea {
+  min-height: 44px;
+}
+
+.nisa-sold-note {
+  padding: 8px 10px;
+  background: #fff9e9;
+  border-left: 3px solid #d7a53a;
+}
+
 .form-field {
   display: grid;
   gap: 6px;
@@ -607,6 +742,42 @@ textarea {
 
   .finance-item-delete-button {
     width: 100%;
+  }
+
+  .nisa-member-card {
+    padding: 14px;
+  }
+
+  .nisa-member-selector {
+    grid-template-columns: 1fr;
+  }
+
+  .nisa-member-selector button {
+    width: 100%;
+  }
+
+  .nisa-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nisa-summary-item:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .nisa-summary-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 8px 6px;
+  }
+
+  .nisa-record-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(58px, 1fr));
+  }
+
+  .nisa-record-actions .nisa-action-button {
+    width: auto;
+    min-height: 40px;
+    padding: 8px;
   }
 
   .chart-row {
